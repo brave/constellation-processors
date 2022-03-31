@@ -1,1 +1,5 @@
 /target
+.cargo
+.env
+buffer
+local_notes

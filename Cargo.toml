@@ -6,3 +6,16 @@ edition = "2021"
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [dependencies]
+nested-sta-rs = { git = "ssh://git@github.com/brave-experiments/nested-sta-rs", branch = "expose-lower-level-funcs" }
+actix-web = "4"
+rusoto_core = "0.47"
+rusoto_s3 = "0.47"
+env_logger = "0.9"
+log = "0.4"
+tokio = { version = "1.17", features = ["full"] }
+dotenv = "0.15"
+derive_more = "0.99"
+lru = "0.7"
+hex = "0.4"
+rand = "0.8"
+clap = { version = "3.1", features = ["derive"] }
