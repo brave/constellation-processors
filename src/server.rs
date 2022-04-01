@@ -3,9 +3,8 @@ use crate::state::AppState;
 
 #[post("/")]
 async fn main_handler(body: web::Bytes, state: Data<AppState>) -> impl Responder {
-  let mut stream = state.rec_stream.lock().await;
   // TODO: add proper error handling, check if body is valid base64
-  stream.produce(
+  state.rec_stream.produce(
     std::str::from_utf8(&body).unwrap().trim()
   ).await.unwrap();
   ""

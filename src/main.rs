@@ -11,12 +11,9 @@ use actix_web::web::Data;
 use dotenv::dotenv;
 use env_logger::Env;
 use record_stream::InMemRecordStream;
-use tokio::sync::Mutex;
 use server::start_server;
 use clap::Parser;
 use partitioner::start_partitioner;
-use std::process;
-use std::env;
 
 use state::AppState;
 
@@ -48,7 +45,7 @@ async fn main() {
   ).init();
 
   let state = Data::new(AppState {
-    rec_stream: Mutex::new(Box::new(InMemRecordStream::default()))
+    rec_stream: Box::new(InMemRecordStream::default())
   });
 
   if cli_args.partitioner {

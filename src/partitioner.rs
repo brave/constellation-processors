@@ -8,9 +8,9 @@ use crate::state::AppState;
 use crate::buffer::{RecordBuffer, RecordBufferError, BakedFile};
 use crate::record_stream::RecordStreamError;
 use crate::star::{parse_message, AppSTARError};
-use tokio::try_join;
+use tokio::{try_join, select};
 use tokio::time::{sleep, Duration};
-use tokio::sync::mpsc::{self, UnboundedSender, UnboundedReceiver, error::TryRecvError};
+use tokio::sync::mpsc::{self, UnboundedSender, UnboundedReceiver};
 use derive_more::{From, Error, Display};
 
 const EXPIRED_CHECK_INTERVAL: Wrapping<usize> = Wrapping(10);
@@ -31,14 +31,12 @@ async fn process_lake(lake: DataLake, buffer_dir: String,
   to_buffering: UnboundedSender<BakedFile>) -> Result<(), PartitionerError> {
 
   loop {
-    match from_buffering.try_recv() {
-      Err(e) => {
-        if let TryRecvError::Disconnected = e {
-          info!("Lake task ending, while receiving baked file from buffer task");
-          return Ok(());
-        }
+    match from_buffering.recv().await {
+      None => {
+        info!("Lake task ending, while receiving baked file from buffer task");
+        return Ok(());
       },
-      Ok(baked_file) => {
+      Some(baked_file) => {
         debug!("Storing {} in data lake", baked_file.key);
         lake.store_file(&Path::new(&buffer_dir).join(&baked_file.key),
           &baked_file.key, true).await?;
@@ -48,7 +46,6 @@ async fn process_lake(lake: DataLake, buffer_dir: String,
         }
       }
     }
-    sleep(Duration::from_millis(1)).await;
   }
 }
 
@@ -65,56 +62,52 @@ async fn process_buffer(state: Data<AppState>, mut buffer: RecordBuffer,
       continue;
     }
 
-    let mut rec_stream = state.rec_stream.lock().await;
-    let records = rec_stream.consume().await?;
-    drop(rec_stream);
-
-    for record in records {
-      match parse_message(&record) {
-        Err(e) => debug!("failed to parse message: {}", e),
-        Ok(msg) => {
-          let msg_info = MsgInfo {
-            // TODO: use epoch tag retrieval function
-            epoch_tag: "a".to_string(),
-            layer: 0,
-            msg_tag: msg.unencrypted_layer.tag.clone()
-          };
-          debug!("Sending {} to buffer", msg_info.to_string());
-          buffer.send_to_buffer(&msg_info, &record).await?;
+    select! {
+      res = state.rec_stream.consume() => {
+        let records = res?;
+        for record in records {
+          match parse_message(&record) {
+            Err(e) => debug!("failed to parse message: {}", e),
+            Ok(msg) => {
+              let msg_info = MsgInfo {
+                epoch_tag: msg.epoch,
+                layer: 0,
+                msg_tag: msg.unencrypted_layer.tag.clone()
+              };
+              debug!("Sending {} to buffer", msg_info.to_string());
+              buffer.send_to_buffer(&msg_info, &record).await?;
+            }
+          }
         }
-      }
-    }
 
-    buffer.bake_everything_if_full();
-    if it_count % EXPIRED_CHECK_INTERVAL == WR_ZERO {
-      buffer.bake_expired_buffers();
-    }
-    for baked_file in buffer.retrieve_baked_file_paths() {
-      if let Err(_) = to_lake.send(baked_file) {
-        info!("Buffering task ending, while sending baked file to lake task");
-        return Ok(());
-      }
-    }
-
-    let mut rec_stream = state.rec_stream.lock().await;
-    rec_stream.commit_last_consume().await?;
-    drop(rec_stream);
-
-    match from_lake.try_recv() {
-      Err(e) => {
-        if let TryRecvError::Disconnected = e {
-          info!("Buffering task ending, while receiving baked file from lake task");
-          return Ok(());
+        buffer.bake_everything_if_full();
+        if it_count % EXPIRED_CHECK_INTERVAL == WR_ZERO {
+          buffer.bake_expired_buffers();
         }
+        for baked_file in buffer.retrieve_baked_file_paths() {
+          if let Err(_) = to_lake.send(baked_file) {
+            info!("Buffering task ending, while sending baked file to lake task");
+            return Ok(());
+          }
+        }
+
+        state.rec_stream.commit_last_consume().await?;
       },
-      Ok(baked_file) => {
-        debug!("Removing local file {}", baked_file.key);
-        buffer.remove_baked_buffer_file(baked_file).await?;
+      res = from_lake.recv() => {
+        match res {
+          None => {
+            info!("Buffering task ending, while receiving baked file from lake task");
+            return Ok(());
+          },
+          Some(baked_file) => {
+            debug!("Removing local file {}", baked_file.key);
+            buffer.remove_baked_buffer_file(baked_file).await?;
+          }
+        };
       }
     }
 
     it_count += WR_ONE;
-    sleep(Duration::from_millis(1)).await;
   }
 }
 

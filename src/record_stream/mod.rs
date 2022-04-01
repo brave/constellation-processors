@@ -13,7 +13,7 @@ pub struct RecordStreamError {
 
 #[async_trait]
 pub trait RecordStream {
-  async fn produce(&mut self, record: &str) -> Result<(), RecordStreamError>;
-  async fn consume(&mut self) -> Result<Vec<String>, RecordStreamError>;
-  async fn commit_last_consume(&mut self) -> Result<(), RecordStreamError>;
+  async fn produce(&self, record: &str) -> Result<(), RecordStreamError>;
+  async fn consume(&self) -> Result<Vec<String>, RecordStreamError>;
+  async fn commit_last_consume(&self) -> Result<(), RecordStreamError>;
 }
