@@ -1,5 +1,6 @@
 use std::env;
 use std::str::FromStr;
+use std::time::{Instant, Duration};
 use tokio::fs::{OpenOptions, File, create_dir_all, remove_file};
 use tokio::io::{self, AsyncWriteExt};
 use std::path::Path;
@@ -14,18 +15,25 @@ const BUFFER_SIZE_ENV_VAR: &str = "BUFFER_SIZE";
 const DEFAULT_BUFFER_SIZE: usize = 15 * 1024 * 1024 * 1024;
 const MAX_OPEN_FILES: usize = 256;
 const BAKED_FILE_SIZE_BYTES: usize = 524288;
+const BUFFER_EXPIRY_TIME_SECS: u64 = 36 * 3600;
 const UNBAKED_THRESHOLD: f64 = 0.6f64;
 
 #[derive(Clone)]
 pub struct BakedFile {
-  key: String,
-  size: usize
+  pub key: String,
+  pub size: usize
+}
+
+#[derive(Clone)]
+struct BufferInfo {
+  id: String,
+  size: usize,
+  creation_time: Instant
 }
 
 pub struct RecordBuffer {
   open_files: LruCache<MsgInfo, File>,
-  latest_buffer_ids: HashMap<MsgInfo, String>,
-  latest_buffer_sizes: HashMap<MsgInfo, usize>,
+  latest_buffers: HashMap<MsgInfo, BufferInfo>,
   baked_files: Vec<BakedFile>,
   total_unbaked_size: usize,
   total_baked_size: usize,
@@ -51,8 +59,7 @@ impl RecordBuffer {
     };
     Self {
       open_files: LruCache::new(MAX_OPEN_FILES),
-      latest_buffer_ids: Default::default(),
-      latest_buffer_sizes: Default::default(),
+      latest_buffers: Default::default(),
       baked_files: Default::default(),
       total_unbaked_size: 0,
       total_baked_size: 0,
@@ -61,39 +68,54 @@ impl RecordBuffer {
     }
   }
 
-  fn get_buffer_key(&mut self, msg_info: &MsgInfo) -> String {
-    let buffer_id = self.latest_buffer_ids.entry(msg_info.clone()).or_insert_with(|| {
-      let id_buf = rand::random::<[u8; 8]>();
-      hex::encode(id_buf)
-    });
+  fn format_buffer_key(msg_info: &MsgInfo, buffer_info: &BufferInfo) -> String {
     let msg_info_str = msg_info.to_string();
-    format!("{}/{}.b64l", msg_info_str, buffer_id)
+    format!("{}/{}.b64l", msg_info_str, buffer_info.id)
   }
 
-  fn bake_file(&mut self, msg_info: &MsgInfo) {
-    self.open_files.pop(msg_info);
-    let buffer_size = *self.latest_buffer_sizes.get(msg_info).unwrap_or(&0);
-    let key = self.get_buffer_key(msg_info);
-    self.baked_files.push(BakedFile {
-      key,
-      size: buffer_size
+  fn get_buffer_key(&mut self, msg_info: &MsgInfo) -> String {
+    let buffer_info = self.latest_buffers.entry(msg_info.clone()).or_insert_with(|| {
+      let id_bytes = rand::random::<[u8; 8]>();
+      let id = hex::encode(id_bytes);
+      let buffer_info = BufferInfo {
+        id,
+        size: 0,
+        creation_time: Instant::now()
+      };
+      buffer_info
     });
-    self.latest_buffer_sizes.remove(msg_info);
-    self.latest_buffer_ids.remove(msg_info);
+    Self::format_buffer_key(msg_info, buffer_info)
+  }
 
-    self.total_unbaked_size -= buffer_size;
-    self.total_baked_size += buffer_size;
+  fn bake_file(&mut self, msg_info: Option<&MsgInfo>) {
+    // if none specified, bake all files
+    let entries = match msg_info {
+      Some(msg_info) => vec![(msg_info.clone(), self.latest_buffers.remove(msg_info).unwrap())],
+      None => self.latest_buffers.drain().collect()
+    };
+    for (msg_info, buffer_info) in entries {
+      self.open_files.pop(&msg_info);
+      let key = Self::format_buffer_key(&msg_info, &buffer_info);
+      self.baked_files.push(BakedFile {
+        key,
+        size: buffer_info.size
+      });
+
+      debug!("{} {} {}", buffer_info.size, self.total_baked_size, self.total_unbaked_size);
+      self.total_unbaked_size -= buffer_info.size;
+      self.total_baked_size += buffer_info.size;
+      self.latest_buffers.remove(&msg_info);
+    }
   }
 
   fn update_sizes_and_maybe_bake(&mut self, msg_info: &MsgInfo,
     added_size: usize) {
-    let buffer_size = self.latest_buffer_sizes.entry(msg_info.clone()).or_insert(0);
-    *buffer_size += added_size;
+    let buffer_info = self.latest_buffers.get_mut(msg_info).unwrap();
+    buffer_info.size += added_size;
+    self.total_unbaked_size += added_size;
 
-    self.total_unbaked_size += *buffer_size;
-
-    if *buffer_size >= BAKED_FILE_SIZE_BYTES {
-      self.bake_file(msg_info);
+    if buffer_info.size >= BAKED_FILE_SIZE_BYTES {
+      self.bake_file(Some(msg_info));
     }
   }
 
@@ -123,7 +145,7 @@ impl RecordBuffer {
     Ok(())
   }
 
-  pub async fn retrieve_baked_file_paths(&mut self) -> Vec<BakedFile> {
+  pub fn retrieve_baked_file_paths(&mut self) -> Vec<BakedFile> {
     let baked_files = self.baked_files.iter().cloned().collect();
     self.baked_files.clear();
     baked_files
@@ -145,27 +167,31 @@ impl RecordBuffer {
     self.get_bytes_used() >= self.buffer_size
   }
 
-  pub fn maybe_bake_everything(&mut self) -> bool {
+  pub fn bake_everything_if_full(&mut self) {
     if !self.is_buffer_full() {
-      return false;
+      return;
     }
     let unbaked_threshold = (UNBAKED_THRESHOLD * self.buffer_size as f64) as usize;
     if self.total_unbaked_size >= unbaked_threshold {
-      let msg_infos: Vec<MsgInfo> = self.latest_buffer_sizes.keys().cloned().collect();
-      for msg_info in msg_infos {
-        self.bake_file(&msg_info);
+      self.bake_file(None);
+    }
+  }
+
+  pub fn bake_expired_buffers(&mut self) {
+    let time_threshold = Duration::from_secs(BUFFER_EXPIRY_TIME_SECS);
+    let msg_infos: Vec<MsgInfo> = self.latest_buffers.iter().filter_map(|(msg_info, buffer_info)| {
+      if buffer_info.creation_time.elapsed() >= time_threshold {
+        Some(msg_info.clone())
+      } else {
+        None
       }
-      true
-    } else {
-      false
+    }).collect();
+    for msg_info in msg_infos {
+      self.bake_file(Some(&msg_info));
     }
   }
 
   pub fn get_buffer_dir(&self) -> String {
     self.buffer_dir.clone()
-  }
-
-  pub fn close_files(&mut self) {
-    self.open_files.clear();
   }
 }

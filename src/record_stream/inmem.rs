@@ -1,8 +1,8 @@
-use super::RecordStream;
+use super::{RecordStream, RecordStreamError};
 use std::collections::VecDeque;
 use std::ops::Range;
-use std::error::Error;
 use std::cmp::min;
+use async_trait::async_trait;
 
 const MAX_POLL_SIZE: usize = 64;
 
@@ -25,19 +25,20 @@ impl InMemRecordStream {
   }
 }
 
+#[async_trait]
 impl RecordStream for InMemRecordStream {
-  fn produce(&mut self, record: &str) -> Result<(), Box<dyn Error>> {
+  async fn produce(&mut self, record: &str) -> Result<(), RecordStreamError> {
     self.queue.push_front(record.to_string());
     Ok(())
   }
 
-  fn consume(&mut self) -> Result<Vec<String>, Box<dyn Error>> {
+  async fn consume(&mut self) -> Result<Vec<String>, RecordStreamError> {
     let range = self.get_consume_range(false);
     self.last_consume_end_index = Some(range.end);
     Ok(self.queue.range(range).cloned().collect())
   }
 
-  fn commit_last_consume(&mut self) -> Result<(), Box<dyn Error>> {
+  async fn commit_last_consume(&mut self) -> Result<(), RecordStreamError> {
     let range = self.get_consume_range(true);
 
     self.queue.drain(range.clone());

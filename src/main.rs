@@ -3,6 +3,9 @@ mod buffer;
 mod models;
 mod record_stream;
 mod server;
+mod state;
+mod partitioner;
+mod star;
 
 use actix_web::web::Data;
 use dotenv::dotenv;
@@ -11,8 +14,11 @@ use record_stream::InMemRecordStream;
 use tokio::sync::Mutex;
 use server::start_server;
 use clap::Parser;
+use partitioner::start_partitioner;
+use std::process;
+use std::env;
 
-use models::{MsgInfo, AppState};
+use state::AppState;
 
 #[macro_use]
 extern crate log;
@@ -21,14 +27,18 @@ extern crate log;
 #[clap(version, about)]
 struct CliArgs {
   #[clap(short, long)]
-  server: bool
+  server: bool,
+
+  #[clap(short, long)]
+  partitioner: bool
 }
 
 #[tokio::main]
-async fn main() -> std::io::Result<()> {
+async fn main() {
+  // TODO: sigint-triggered graceful shutdown
   let cli_args = CliArgs::parse();
 
-  if !cli_args.server {
+  if !cli_args.server && !cli_args.partitioner {
     panic!("Must select process mode! Use -h flag for more details.");
   }
 
@@ -41,9 +51,15 @@ async fn main() -> std::io::Result<()> {
     rec_stream: Mutex::new(Box::new(InMemRecordStream::default()))
   });
 
-  if cli_args.server {
-    return start_server(state).await;
+  if cli_args.partitioner {
+    if cli_args.server {
+      tokio::spawn(start_partitioner(state.clone()));
+    } else {
+      start_partitioner(state.clone()).await;
+    }
   }
-  Ok(())
+  if cli_args.server {
+    start_server(state).await.unwrap();
+  }
 }
 

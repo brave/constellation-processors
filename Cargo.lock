@@ -1336,7 +1336,7 @@ dependencies = [
 [[package]]
 name = "nested-sta-rs"
 version = "0.1.0"
-source = "git+ssh://git@github.com/brave-experiments/nested-sta-rs?branch=expose-lower-level-funcs#3f4207fa75c9016f7278ef320ab3dfe654def930"
+source = "git+ssh://git@github.com/brave-experiments/nested-sta-rs?branch=main#74af24445fadd0a5a86e1e54ae04624eab2039b0"
 dependencies = [
  "base64",
  "bincode",
@@ -1353,6 +1353,9 @@ name = "nested-star-aggregator"
 version = "0.1.0"
 dependencies = [
  "actix-web",
+ "async-trait",
+ "base64",
+ "bincode",
  "clap 3.1.6",
  "derive_more",
  "dotenv",

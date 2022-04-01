@@ -1,6 +1,4 @@
 use std::fmt;
-use crate::record_stream::RecordStream;
-use tokio::sync::Mutex;
 
 #[derive(Default, Hash, PartialEq, Eq, Clone)]
 pub struct MsgInfo {
@@ -15,8 +13,4 @@ impl fmt::Display for MsgInfo {
     write!(f, "epoch={}/layer={}/tag={}",
       self.epoch_tag, self.layer, msg_tag_hex)
   }
-}
-
-pub struct AppState {
-  pub rec_stream: Mutex<Box<dyn RecordStream + Send>>
 }
