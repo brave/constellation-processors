@@ -52,7 +52,7 @@ async fn process_lake(lake: DataLake, buffer_dir: String,
 async fn process_buffer(state: Data<AppState>, mut buffer: RecordBuffer,
   mut from_lake: UnboundedReceiver<BakedFile>,
   to_lake: UnboundedSender<BakedFile>) -> Result<(), PartitionerError> {
-
+  // TODO: upload existing files from previous process (DR scenario)
   let mut it_count = Wrapping(0usize);
 
   loop {
@@ -64,19 +64,17 @@ async fn process_buffer(state: Data<AppState>, mut buffer: RecordBuffer,
 
     select! {
       res = state.rec_stream.consume() => {
-        let records = res?;
-        for record in records {
-          match parse_message(&record) {
-            Err(e) => debug!("failed to parse message: {}", e),
-            Ok(msg) => {
-              let msg_info = MsgInfo {
-                epoch_tag: msg.epoch,
-                layer: 0,
-                msg_tag: msg.unencrypted_layer.tag.clone()
-              };
-              debug!("Sending {} to buffer", msg_info.to_string());
-              buffer.send_to_buffer(&msg_info, &record).await?;
-            }
+        let record = res?;
+        match parse_message(&record) {
+          Err(e) => debug!("failed to parse message: {}", e),
+          Ok(msg) => {
+            let msg_info = MsgInfo {
+              epoch_tag: msg.epoch,
+              layer: 0,
+              msg_tag: msg.unencrypted_layer.tag.clone()
+            };
+            debug!("Sending {} to buffer", msg_info.to_string());
+            buffer.send_to_buffer(&msg_info, &record).await?;
           }
         }
 

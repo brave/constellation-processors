@@ -2,7 +2,7 @@ use std::fmt;
 
 #[derive(Default, Hash, PartialEq, Eq, Clone)]
 pub struct MsgInfo {
-  pub epoch_tag: String,
+  pub epoch_tag: u8,
   pub msg_tag: Vec<u8>,
   pub layer: usize
 }

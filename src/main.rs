@@ -10,7 +10,7 @@ mod star;
 use actix_web::web::Data;
 use dotenv::dotenv;
 use env_logger::Env;
-use record_stream::InMemRecordStream;
+use record_stream::{InMemRecordStream, KafkaRecordStream};
 use server::start_server;
 use clap::Parser;
 use partitioner::start_partitioner;
@@ -27,7 +27,10 @@ struct CliArgs {
   server: bool,
 
   #[clap(short, long)]
-  partitioner: bool
+  partitioner: bool,
+
+  #[clap(long)]
+  use_in_mem_stream: bool
 }
 
 #[tokio::main]
@@ -45,7 +48,11 @@ async fn main() {
   ).init();
 
   let state = Data::new(AppState {
-    rec_stream: Box::new(InMemRecordStream::default())
+    rec_stream: if cli_args.use_in_mem_stream {
+      Box::new(InMemRecordStream::default())
+    } else {
+      Box::new(KafkaRecordStream::new(cli_args.server, cli_args.partitioner))
+    }
   });
 
   if cli_args.partitioner {
