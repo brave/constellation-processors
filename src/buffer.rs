@@ -3,11 +3,13 @@ use std::str::FromStr;
 use std::time::{Instant, Duration};
 use tokio::fs::{OpenOptions, File, create_dir_all, remove_file};
 use tokio::io::{self, AsyncWriteExt};
+use tokio::fs;
 use std::path::Path;
 use derive_more::{From, Display, Error};
 use lru::LruCache;
 use crate::models::MsgInfo;
 use std::collections::HashMap;
+use futures::future::BoxFuture;
 
 const BUFFER_DIR_ENV_VAR: &str = "BUFFER_DIR";
 const DEFAULT_BUFFER_DIR: &str = "buffer";
@@ -49,7 +51,7 @@ pub enum RecordBufferError {
   NotBaked
 }
 
-impl RecordBuffer {
+impl<'a> RecordBuffer {
   pub fn new() -> Self {
     let buffer_dir = env::var(BUFFER_DIR_ENV_VAR)
       .unwrap_or(DEFAULT_BUFFER_DIR.to_string());
@@ -101,7 +103,6 @@ impl RecordBuffer {
         size: buffer_info.size
       });
 
-      debug!("{} {} {}", buffer_info.size, self.total_baked_size, self.total_unbaked_size);
       self.total_unbaked_size -= buffer_info.size;
       self.total_baked_size += buffer_info.size;
       self.latest_buffers.remove(&msg_info);
@@ -175,6 +176,29 @@ impl RecordBuffer {
     if self.total_unbaked_size >= unbaked_threshold {
       self.bake_file(None);
     }
+  }
+
+  pub fn cleanup_empty_dirs(&'a self,
+    curr_path: Option<&'a Path>) -> BoxFuture<'a, Result<bool, RecordBufferError>> {
+    Box::pin(async move {
+      let curr_path = curr_path.unwrap_or(Path::new(&self.buffer_dir));
+      let mut entries = fs::read_dir(curr_path).await?;
+      let mut should_remove = true;
+      while let Some(entry) = entries.next_entry().await? {
+        let metadata = entry.metadata().await?;
+        if metadata.is_file() ||
+          (metadata.is_dir() && !self.cleanup_empty_dirs(Some(&entry.path())).await?) {
+          should_remove = false;
+        }
+      }
+
+      if should_remove {
+        debug!("Deleting empty dir {:?}", curr_path);
+        fs::remove_dir(curr_path).await?;
+      }
+
+      Ok(should_remove)
+    })
   }
 
   pub fn bake_expired_buffers(&mut self) {
