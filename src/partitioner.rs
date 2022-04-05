@@ -80,6 +80,8 @@ async fn process_buffer(state: Data<AppState>,
     select! {
       res = state.rec_stream.consume() => {
         let record = res?;
+        // TODO: consider producing/consuming bincode instead of base64
+        // for better performance
         match parse_message(&record) {
           Err(e) => debug!("failed to parse message: {}", e),
           Ok(msg) => {
