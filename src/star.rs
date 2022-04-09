@@ -15,3 +15,9 @@ pub fn parse_message(record: &str) -> Result<NestedMessage, AppSTARError> {
   Ok(NestedMessage::from(smsg))
 }
 
+pub fn serialize_message(message: NestedMessage) -> Result<String, AppSTARError> {
+  let smsg = SerializableNestedMessage::from(message);
+  let bincode_msg = bincode::serialize(&smsg)?;
+  Ok(base64::encode(&bincode_msg))
+}
+

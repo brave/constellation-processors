@@ -87,8 +87,7 @@ async fn process_buffer(state: Data<AppState>,
           Ok(msg) => {
             let msg_info = MsgInfo {
               epoch_tag: msg.epoch,
-              layer: 0,
-              msg_tag: msg.unencrypted_layer.tag.clone()
+              msg_tags: vec![msg.unencrypted_layer.tag.clone()]
             };
             debug!("Sending {} to buffer", msg_info.to_string());
             buffer.send_to_buffer(&msg_info, &record).await?;
@@ -129,7 +128,7 @@ fn upload_and_delete_prev_buffer<'a>(data_lake: &'a DataLake, buffer_dir: &'a st
     while let Some(entry) = entries.next_entry().await? {
       let metadata = entry.metadata().await?;
       let path = &entry.path();
-      let extension = path.extension().unwrap_or(Default::default()).to_str().unwrap();
+      let extension = path.extension().unwrap_or_default().to_str().unwrap();
       if !metadata.is_dir() && extension == "b64l" {
         let key = path.strip_prefix(buffer_dir).unwrap().to_str().unwrap();
         debug!("Storing prev buffer {} in data lake", key);

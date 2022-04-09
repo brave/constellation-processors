@@ -80,7 +80,7 @@ impl KafkaRecordStream {
       .expect("KAFKA_BROKERS env var must be defined");
     let mut result = ClientConfig::new();
     result.set("bootstrap.servers", brokers.clone());
-    if env::var(KAFKA_ENABLE_PLAINTEXT_ENV_KEY).unwrap_or(Default::default()) == "true" {
+    if env::var(KAFKA_ENABLE_PLAINTEXT_ENV_KEY).unwrap_or_default() == "true" {
       result.set("security.protocol", "plaintext");
     }
     result

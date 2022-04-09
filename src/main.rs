@@ -6,6 +6,7 @@ mod server;
 mod state;
 mod partitioner;
 mod star;
+mod aggregator;
 
 use actix_web::web::Data;
 use dotenv::dotenv;
@@ -14,6 +15,7 @@ use record_stream::{InMemRecordStream, KafkaRecordStream};
 use server::start_server;
 use clap::Parser;
 use partitioner::start_partitioner;
+use aggregator::Aggregator;
 
 use state::AppState;
 
@@ -29,6 +31,9 @@ struct CliArgs {
   #[clap(short, long)]
   partitioner: bool,
 
+  #[clap(short, long)]
+  aggregator: bool,
+
   #[clap(long)]
   use_in_mem_stream: bool
 }
@@ -38,14 +43,20 @@ async fn main() {
   // TODO: sigint-triggered graceful shutdown
   let cli_args = CliArgs::parse();
 
-  if !cli_args.server && !cli_args.partitioner {
-    panic!("Must select process mode! Use -h flag for more details.");
+  if !cli_args.server && !cli_args.partitioner && !cli_args.aggregator {
+    panic!("Must select process mode! Use -h switch for more details.");
   }
 
   dotenv().ok();
   env_logger::Builder::from_env(
     Env::default().default_filter_or("info")
   ).init();
+
+  if cli_args.aggregator {
+    let mut aggregator = Aggregator::new();
+    aggregator.aggregate().await.unwrap();
+    return;
+  }
 
   let state = Data::new(AppState {
     rec_stream: if cli_args.use_in_mem_stream {

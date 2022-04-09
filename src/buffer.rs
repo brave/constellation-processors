@@ -168,6 +168,10 @@ impl<'a> RecordBuffer {
     self.get_bytes_used() >= self.buffer_size
   }
 
+  pub fn bake_everything(&mut self) {
+    self.bake_file(None);
+  }
+
   pub fn bake_everything_if_full(&mut self) {
     if !self.is_buffer_full() {
       return;

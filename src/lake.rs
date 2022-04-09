@@ -1,9 +1,14 @@
 use std::env;
 use std::path::Path;
-use rusoto_s3::{S3, S3Client, PutObjectRequest, PutObjectError};
+use std::pin::Pin;
+use rusoto_s3::{S3, S3Client, PutObjectRequest,
+  PutObjectError, ListObjectsV2Request, ListObjectsV2Error,
+  GetObjectRequest, GetObjectError};
 use rusoto_core::{Region, RusotoError, ByteStream};
 use tokio::{fs::File, io};
 use tokio::io::AsyncReadExt;
+use futures_core::stream::Stream;
+use async_stream::stream;
 use derive_more::{From, Error, Display};
 
 const S3_ENDPOINT_ENV_VAR: &str = "S3_ENDPOINT";
@@ -17,13 +22,28 @@ pub enum DataLakeError {
   #[display(fmt = "IO error: {}", _0)]
   IO(io::Error),
   #[display(fmt = "Upload error: {}", _0)]
-  Upload(RusotoError<PutObjectError>)
+  Upload(RusotoError<PutObjectError>),
+  #[display(fmt = "Object list error: {}", _0)]
+  List(RusotoError<ListObjectsV2Error>),
+  #[display(fmt = "Download error: {}", _0)]
+  Download(RusotoError<GetObjectError>)
 }
 
 pub struct DataLake {
   s3: S3Client,
   partitioned_bucket_name: String,
   final_bucket_name: String
+}
+
+#[derive(Debug)]
+pub struct LakeFile {
+  pub key: String,
+  pub size: usize
+}
+
+pub struct LakeListing {
+  pub prefixes: Vec<String>,
+  pub files: Vec<LakeFile>
 }
 
 impl DataLake {
@@ -67,5 +87,59 @@ impl DataLake {
       ..Default::default()
     }).await?;
     Ok(())
+  }
+
+  pub fn list_partitioned_files<'a>(&'a self,
+    prefix: Option<String>) -> Pin<Box<dyn Stream<Item = Result<LakeListing, DataLakeError>> + 'a>> {
+    Box::pin(stream! {
+      let mut continuation_token = None;
+      loop {
+        let output = self.s3.list_objects_v2(ListObjectsV2Request {
+          bucket: self.partitioned_bucket_name.clone(),
+          continuation_token: continuation_token.clone(),
+          prefix: prefix.clone(),
+          delimiter: Some("/".to_string()),
+          ..Default::default()
+        }).await;
+        match output {
+          Err(e) => yield Err(DataLakeError::from(e)),
+          Ok(output) => {
+            continuation_token = output.continuation_token;
+            yield Ok(LakeListing {
+              files: output.contents.unwrap_or_default().into_iter().map(|v| LakeFile {
+                key: v.key.unwrap_or_default(),
+                size: v.size.unwrap_or_default() as usize
+              }).collect(),
+              prefixes: output.common_prefixes.unwrap_or_default().into_iter().map(|v| {
+                v.prefix.unwrap_or_default()
+              }).collect(),
+            });
+          }
+        };
+        if continuation_token.is_none() {
+          break;
+        }
+      }
+    })
+  }
+
+  pub async fn download_file_to_string(&self, key: &str,
+    in_partitioned_bucket: bool) -> Result<String, DataLakeError> {
+    let bucket = if in_partitioned_bucket {
+      self.partitioned_bucket_name.clone()
+    } else {
+      self.final_bucket_name.clone()
+    };
+
+    let resp = self.s3.get_object(GetObjectRequest {
+      bucket,
+      key: key.to_string(),
+      ..Default::default()
+    }).await?;
+
+    let mut output = String::new();
+    resp.body.unwrap().into_async_read().read_to_string(&mut output).await?;
+
+    Ok(output)
   }
 }
