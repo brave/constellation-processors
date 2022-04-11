@@ -1,0 +1,37 @@
+version: '3.9'
+
+networks:
+  star-agg:
+
+services:
+  db:
+    image: postgres
+    restart: always
+    ports:
+      - 5642:5432
+    environment:
+      POSTGRES_USER: star
+      POSTGRES_PASSWORD: password
+    networks:
+      - star-agg
+
+  zookeeper:
+    image: bitnami/zookeeper
+    environment:
+      - ALLOW_ANONYMOUS_LOGIN=yes
+    networks:
+      - star-agg
+  kafka:
+    image: bitnami/kafka
+    ports:
+      - 9092:9092
+    environment:
+      - KAFKA_CFG_ZOOKEEPER_CONNECT=zookeeper:2181
+      - KAFKA_CFG_NUM_PARTITIONS=12
+      - ALLOW_PLAINTEXT_LISTENER=yes
+      - KAFKA_CFG_AUTO_CREATE_TOPICS_ENABLE=true
+      - KAFKA_CFG_ADVERTISED_LISTENERS=PLAINTEXT://localhost:9092
+    depends_on:
+      - zookeeper
+    networks:
+      - star-agg

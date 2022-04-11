@@ -1,0 +1,16 @@
+[package]
+name = "test-client"
+version = "0.1.0"
+edition = "2021"
+
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+
+[dependencies]
+nested-sta-rs = { git = "ssh://git@github.com/brave-experiments/nested-sta-rs", branch = "add-epoch-to-message" }
+rand = "0.8"
+clap = { version = "3.1", features = ["derive"] }
+reqwest = "0.11"
+tokio = { version = "1", features = ["full"] }
+futures = "0.3"
+base64 = "0.13"
+bincode = "1.3"
