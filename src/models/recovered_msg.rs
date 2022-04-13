@@ -1,78 +1,66 @@
-use crate::state::DBPool;
-use crate::schema::recovered_msgs;
-use tokio::task;
-use actix_web::web;
-use crate::state::AppState;
+use super::DBPool;
 use crate::models::PgStoreError;
-use diesel::result::{Error, DatabaseErrorKind};
-use diesel::{QueryDsl, ExpressionMethods, RunQueryDsl, Connection};
+use crate::schema::recovered_msgs;
+use diesel::{ExpressionMethods, QueryDsl, RunQueryDsl};
+use std::sync::Arc;
+use tokio::task;
 
 #[derive(Queryable)]
 pub struct RecoveredMessage {
   pub id: i64,
   pub msg_tag: Vec<u8>,
-  pub epoch_tag: String,
+  pub epoch_tag: i16,
   pub metric_name: String,
   pub metric_value: String,
-  pub key: Vec<u8>
+  pub parent_recovered_msg_id: Option<i64>,
+  pub count: i64,
+  pub key: Vec<u8>,
 }
 
 #[derive(Insertable)]
-#[table_name="recovered_msgs"]
+#[table_name = "recovered_msgs"]
 pub struct NewRecoveredMessage {
   pub msg_tag: Vec<u8>,
-  pub epoch_tag: String,
+  pub epoch_tag: i16,
   pub metric_name: String,
   pub metric_value: String,
-  pub key: Vec<u8>
+  pub parent_recovered_msg_id: Option<i64>,
+  pub count: i64,
+  pub key: Vec<u8>,
 }
 
 impl RecoveredMessage {
-  pub async fn find(app_st: web::Data<AppState>, search_epoch_tag: String,
-    search_msg_tag: Vec<u8>) -> Result<Option<Self>, PgStoreError> {
+  pub async fn update_count(
+    db_pool: Arc<DBPool>,
+    curr_id: i64,
+    new_count: i64,
+  ) -> Result<(), PgStoreError> {
     task::spawn_blocking(move || {
       use crate::schema::recovered_msgs::dsl::*;
 
-      let conn = app_st.db_pool.get()?;
-      let recovered_msg = recovered_msgs
-        .filter(msg_tag.eq(&search_msg_tag))
-        .filter(epoch_tag.eq(&search_epoch_tag))
-        .first::<Self>(&conn);
+      let conn = db_pool.get()?;
+      diesel::update(recovered_msgs.filter(id.eq(curr_id)))
+        .set(count.eq(new_count))
+        .execute(&conn)?;
 
-      match recovered_msg {
-        Ok(r) => Ok(Some(r)),
-        Err(e) => match e {
-          diesel::result::Error::NotFound => Ok(None),
-          _ => Err(PgStoreError::from(e))
-        }
-      }
-    }).await?
+      Ok(())
+    })
+    .await?
   }
 }
 
 impl NewRecoveredMessage {
-  pub async fn insert(self, app_st: web::Data<AppState>) -> Result<i64, PgStoreError> {
+  pub async fn insert(self, db_pool: Arc<DBPool>) -> Result<i64, PgStoreError> {
     task::spawn_blocking(move || {
       use crate::schema::recovered_msgs::dsl::id;
-
-      let conn = app_st.db_pool.get()?;
-      let insert_res = diesel::insert_into(recovered_msgs::table)
-        .values(&self)
-        .returning(id)
-        .get_result::<i64>(&conn);
-      if let Err(e) = insert_res.as_ref() {
-        if let Error::DatabaseError(de, _) = e {
-          if let DatabaseErrorKind::UniqueViolation = de {
-            use crate::schema::recovered_msgs::dsl::*;
-            return Ok(recovered_msgs
-              .filter(msg_tag.eq(self.msg_tag))
-              .filter(epoch_tag.eq(self.epoch_tag))
-              .select(id)
-              .first::<i64>(&conn)?);
-          }
-        }
-      }
-      Ok(insert_res?)
-    }).await?
+      let conn = db_pool.get()?;
+      Ok(
+        diesel::insert_into(recovered_msgs::table)
+          .values(&self)
+          .returning(id)
+          .get_result::<i64>(&conn)?,
+      )
+    })
+    .await?
   }
 }

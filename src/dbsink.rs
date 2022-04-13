@@ -1,22 +1,22 @@
-use derive_more::{Error, From, Display};
-use std::sync::Arc;
+use crate::models::{create_db_pool, BatchInsert, NewPendingMessage, PgStoreError};
+use crate::record_stream::{RecordStream, RecordStreamError};
 use crate::star::{parse_message, AppSTARError};
-use crate::record_stream::{RecordStreamError, RecordStream};
-use crate::models::{create_db_pool, BatchInsert,
-  PgStoreError, NewPendingMessage};
+use derive_more::{Display, Error, From};
+use std::sync::Arc;
 
-const BATCH_SIZE: usize = 2500;
+const BATCH_SIZE: usize = 1000;
 
 #[derive(Error, From, Display, Debug)]
 #[display(fmt = "DB sink error: {}")]
 pub enum DBSinkError {
   STAR(AppSTARError),
   RecordStream(RecordStreamError),
-  Database(PgStoreError)
+  Database(PgStoreError),
 }
 
 pub async fn start_dbsink(
-  rec_stream: &(dyn RecordStream + Send + Sync)) -> Result<(), DBSinkError> {
+  rec_stream: &(dyn RecordStream + Send + Sync),
+) -> Result<(), DBSinkError> {
   let db_pool = Arc::new(create_db_pool());
   let mut batch = Vec::with_capacity(BATCH_SIZE);
   loop {
@@ -28,7 +28,7 @@ pub async fn start_dbsink(
           msg_tag: data.msg.unencrypted_layer.tag.clone(),
           epoch_tag: data.msg.epoch as i16,
           parent_recovered_msg_id: None,
-          message: data.bincode_msg
+          message: data.bincode_msg,
         });
       }
     };

@@ -1,12 +1,13 @@
 use super::{RecordStream, RecordStreamError};
-use std::collections::VecDeque;
 use async_trait::async_trait;
-use tokio::sync::{Notify, Mutex};
+use std::collections::VecDeque;
+use tokio::sync::{Mutex, Notify};
 
 #[derive(Default)]
 pub struct InMemRecordStream {
   queue: Mutex<VecDeque<String>>,
-  notify: Notify
+  notify: Notify,
+  consume_count: Mutex<usize>,
 }
 
 #[async_trait]
@@ -20,20 +21,24 @@ impl RecordStream for InMemRecordStream {
 
   async fn consume(&self) -> Result<String, RecordStreamError> {
     let mut queue = self.queue.lock().await;
-    while queue.is_empty() {
+    let c_count = *self.consume_count.lock().await;
+    while c_count >= queue.len() {
       drop(queue);
       self.notify.notified().await;
       queue = self.queue.lock().await;
     }
-    Ok(queue.front().unwrap().clone())
+    let res = queue.get(c_count).unwrap().clone();
+    *self.consume_count.lock().await += 1;
+    Ok(res)
   }
 
   async fn commit_last_consume(&self) -> Result<(), RecordStreamError> {
     let mut queue = self.queue.lock().await;
 
-    queue.pop_front();
+    let mut c_count = self.consume_count.lock().await;
+    queue.drain(..*c_count);
+    *c_count = 0;
 
     Ok(())
   }
-
 }

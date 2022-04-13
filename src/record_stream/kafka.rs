@@ -1,16 +1,17 @@
 use super::{RecordStream, RecordStreamError};
-use tokio::sync::Mutex;
-use rdkafka::client::ClientContext;
-use rdkafka::consumer::{Consumer, ConsumerContext,
-  stream_consumer::StreamConsumer, Rebalance, CommitMode};
-use rdkafka::producer::{future_producer::FutureProducer, FutureRecord};
-use rdkafka::topic_partition_list::{TopicPartitionList, Offset};
-use rdkafka::config::ClientConfig;
-use rdkafka::message::Message;
-use rdkafka::error::KafkaResult;
 use async_trait::async_trait;
+use rdkafka::client::ClientContext;
+use rdkafka::config::ClientConfig;
+use rdkafka::consumer::{
+  stream_consumer::StreamConsumer, CommitMode, Consumer, ConsumerContext, Rebalance,
+};
+use rdkafka::error::KafkaResult;
+use rdkafka::message::Message;
+use rdkafka::producer::{future_producer::FutureProducer, FutureRecord};
+use rdkafka::topic_partition_list::{Offset, TopicPartitionList};
 use std::env;
 use std::time::Duration;
+use tokio::sync::Mutex;
 
 const KAFKA_TOPIC_ENV_KEY: &str = "KAFKA_TOPIC";
 const DEFAULT_KAFKA_TOPIC: &str = "p3a-star";
@@ -39,7 +40,7 @@ pub struct KafkaRecordStream {
   producer: Option<FutureProducer<KafkaContext>>,
   consumer: Option<StreamConsumer<KafkaContext>>,
   tpl: Mutex<TopicPartitionList>,
-  topic: String
+  topic: String,
 }
 
 impl KafkaRecordStream {
@@ -50,34 +51,41 @@ impl KafkaRecordStream {
       producer: None,
       consumer: None,
       tpl: Mutex::new(TopicPartitionList::new()),
-      topic: topic.clone()
+      topic: topic.clone(),
     };
     if enable_producer {
       let context = KafkaContext;
       let mut config = Self::new_client_config();
-      result.producer = Some(config
-        .set("message.timeout.ms", "6000")
-        .create_with_context(context)
-        .unwrap()
+      result.producer = Some(
+        config
+          .set("message.timeout.ms", "6000")
+          .create_with_context(context)
+          .unwrap(),
       );
     }
     if enable_consumer {
       let context = KafkaContext;
       let mut config = Self::new_client_config();
-      result.consumer = Some(config
-        .set("group.id", "star-agg")
-        .set("enable.auto.commit", "false")
-        .set("session.timeout.ms", "6000")
-        .create_with_context(context)
-        .unwrap());
-      result.consumer.as_ref().unwrap().subscribe(&[&topic]).unwrap();
+      result.consumer = Some(
+        config
+          .set("group.id", "star-agg")
+          .set("enable.auto.commit", "false")
+          .set("session.timeout.ms", "6000")
+          .create_with_context(context)
+          .unwrap(),
+      );
+      result
+        .consumer
+        .as_ref()
+        .unwrap()
+        .subscribe(&[&topic])
+        .unwrap();
     }
     result
   }
 
   fn new_client_config() -> ClientConfig {
-    let brokers = env::var(KAFKA_BROKERS_ENV_KEY)
-      .expect("KAFKA_BROKERS env var must be defined");
+    let brokers = env::var(KAFKA_BROKERS_ENV_KEY).expect("KAFKA_BROKERS env var must be defined");
     let mut result = ClientConfig::new();
     result.set("bootstrap.servers", brokers.clone());
     if env::var(KAFKA_ENABLE_PLAINTEXT_ENV_KEY).unwrap_or_default() == "true" {
@@ -91,15 +99,11 @@ impl KafkaRecordStream {
 impl RecordStream for KafkaRecordStream {
   async fn produce(&self, record: &str) -> Result<(), RecordStreamError> {
     let producer = self.producer.as_ref().expect("Kafka producer not enabled");
-    let record: FutureRecord<str, str> = FutureRecord::to(&self.topic)
-      .payload(record);
-    let send_result = producer.send(
-      record,
-      Duration::from_secs(12)
-    ).await;
+    let record: FutureRecord<str, str> = FutureRecord::to(&self.topic).payload(record);
+    let send_result = producer.send(record, Duration::from_secs(12)).await;
     match send_result {
       Ok(_) => Ok(()),
-      Err((e, _)) => Err(RecordStreamError::from(format!("Send error: {}", e)))
+      Err((e, _)) => Err(RecordStreamError::from(format!("Send error: {}", e))),
     }
   }
 
@@ -115,11 +119,21 @@ impl RecordStream for KafkaRecordStream {
             return Err(RecordStreamError::from(format!("Deserialize error: {}", e)));
           }
         };
-        trace!("recv partition = {} offset = {}", msg.partition(), msg.offset());
+        trace!(
+          "recv partition = {} offset = {}",
+          msg.partition(),
+          msg.offset()
+        );
         let mut tpl = self.tpl.lock().await;
-        if let Err(e) = tpl
-          .add_partition_offset(msg.topic(), msg.partition(), Offset::Offset(msg.offset() + 1)) {
-          return Err(RecordStreamError::from(format!("Offset store error: {}", e)));
+        if let Err(e) = tpl.add_partition_offset(
+          msg.topic(),
+          msg.partition(),
+          Offset::Offset(msg.offset() + 1),
+        ) {
+          return Err(RecordStreamError::from(format!(
+            "Offset store error: {}",
+            e
+          )));
         }
         Ok(payload.to_string())
       }
@@ -132,7 +146,7 @@ impl RecordStream for KafkaRecordStream {
     trace!("committing = {:?}", tpl);
     match consumer.commit(&tpl, CommitMode::Async) {
       Ok(_) => Ok(()),
-      Err(e) => Err(RecordStreamError::from(format!("Commit error: {}", e)))
+      Err(e) => Err(RecordStreamError::from(format!("Commit error: {}", e))),
     }
   }
 }

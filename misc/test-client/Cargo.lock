@@ -1557,8 +1557,6 @@ dependencies = [
 name = "test-client"
 version = "0.1.0"
 dependencies = [
- "base64",
- "bincode",
  "clap 3.1.8",
  "futures",
  "nested-sta-rs",

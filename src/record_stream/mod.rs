@@ -10,14 +10,12 @@ pub use kafka::*;
 #[derive(Debug, Display, Error)]
 #[display(fmt = "Record stream error: {}", description)]
 pub struct RecordStreamError {
-  description: String
+  description: String,
 }
 
 impl From<String> for RecordStreamError {
   fn from(description: String) -> Self {
-    Self {
-      description
-    }
+    Self { description }
   }
 }
 

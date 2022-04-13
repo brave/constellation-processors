@@ -2,3 +2,4 @@
 .env
 buffer
 local_notes
+*.sqldump
