@@ -13,8 +13,10 @@ use std::env;
 use std::time::Duration;
 use tokio::sync::Mutex;
 
-const KAFKA_TOPIC_ENV_KEY: &str = "KAFKA_TOPIC";
-const DEFAULT_KAFKA_TOPIC: &str = "p3a-star";
+const KAFKA_ENC_TOPIC_ENV_KEY: &str = "KAFKA_ENCRYPTED_TOPIC";
+const KAFKA_OUT_TOPIC_ENV_KEY: &str = "KAFKA_OUTPUT_TOPIC";
+const DEFAULT_ENC_KAFKA_TOPIC: &str = "p3a-star-enc";
+const DEFAULT_OUT_KAFKA_TOPIC: &str = "p3a-star-out";
 const KAFKA_BROKERS_ENV_KEY: &str = "KAFKA_BROKERS";
 const KAFKA_ENABLE_PLAINTEXT_ENV_KEY: &str = "KAFKA_ENABLE_PLAINTEXT";
 
@@ -44,8 +46,12 @@ pub struct KafkaRecordStream {
 }
 
 impl KafkaRecordStream {
-  pub fn new(enable_producer: bool, enable_consumer: bool) -> Self {
-    let topic = env::var(KAFKA_TOPIC_ENV_KEY).unwrap_or(DEFAULT_KAFKA_TOPIC.to_string());
+  pub fn new(enable_producer: bool, enable_consumer: bool, use_output_topic: bool) -> Self {
+    let topic = if use_output_topic {
+      env::var(KAFKA_OUT_TOPIC_ENV_KEY).unwrap_or(DEFAULT_OUT_KAFKA_TOPIC.to_string())
+    } else {
+      env::var(KAFKA_ENC_TOPIC_ENV_KEY).unwrap_or(DEFAULT_ENC_KAFKA_TOPIC.to_string())
+    };
 
     let mut result = KafkaRecordStream {
       producer: None,

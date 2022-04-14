@@ -53,6 +53,7 @@ impl RecoveredMessage {
   pub async fn find_by_parent(
     db_pool: Arc<DBPool>,
     parent_id: Option<i64>,
+    filter_epoch_tag: Option<i16>,
   ) -> Result<Vec<Self>, PgStoreError> {
     task::spawn_blocking(move || {
       use crate::schema::recovered_msgs::dsl::*;
@@ -63,7 +64,35 @@ impl RecoveredMessage {
         Some(parent_id) => q.filter(parent_recovered_msg_id.eq(parent_id)),
         None => q.filter(parent_recovered_msg_id.is_null()),
       };
+      if let Some(filter_epoch_tag) = filter_epoch_tag {
+        q = q.filter(epoch_tag.eq(filter_epoch_tag));
+      }
       Ok(q.load(&conn)?)
+    })
+    .await?
+  }
+
+  pub async fn list_distinct_epochs(db_pool: Arc<DBPool>) -> Result<Vec<i16>, PgStoreError> {
+    task::spawn_blocking(move || {
+      use crate::schema::recovered_msgs::dsl::*;
+
+      let conn = db_pool.get()?;
+      Ok(
+        recovered_msgs
+          .select(epoch_tag)
+          .distinct()
+          .load::<i16>(&conn)?,
+      )
+    })
+    .await?
+  }
+
+  pub async fn delete_epoch(pool: Arc<DBPool>, filter_epoch_tag: i16) -> Result<(), PgStoreError> {
+    task::spawn_blocking(move || {
+      use crate::schema::recovered_msgs::dsl::*;
+      let conn = pool.get()?;
+      diesel::delete(recovered_msgs.filter(epoch_tag.eq(filter_epoch_tag))).execute(&conn)?;
+      Ok(())
     })
     .await?
   }

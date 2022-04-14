@@ -1,5 +1,6 @@
 mod aggregator;
 mod dbsink;
+mod epoch;
 mod models;
 mod record_stream;
 mod schema;
@@ -41,6 +42,9 @@ struct CliArgs {
   #[clap(long)]
   use_in_mem_stream: bool,
 
+  #[clap(long)]
+  output_measurements_to_stdout: bool,
+
   #[clap(long, default_value = "2")]
   consumer_count: usize,
 }
@@ -53,8 +57,12 @@ fn create_rec_stream(
     Box::new(InMemRecordStream::default())
   } else {
     let consumer_enabled = cli_args.db_sink && (!create_for_state || cli_args.server);
-    let producer_enabled = cli_args.server && create_for_state;
-    Box::new(KafkaRecordStream::new(producer_enabled, consumer_enabled))
+    let producer_enabled = (cli_args.server && create_for_state) || cli_args.aggregator;
+    Box::new(KafkaRecordStream::new(
+      producer_enabled,
+      consumer_enabled,
+      cli_args.aggregator,
+    ))
   }
 }
 
@@ -71,7 +79,12 @@ async fn main() {
   env_logger::Builder::from_env(Env::default().default_filter_or("info")).init();
 
   if cli_args.aggregator {
-    start_aggregation().await.unwrap();
+    let out_stream = if cli_args.output_measurements_to_stdout {
+      None
+    } else {
+      Some(create_rec_stream(&cli_args, false))
+    };
+    start_aggregation(out_stream.as_ref()).await.unwrap();
     return;
   }
 

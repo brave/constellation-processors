@@ -61,6 +61,16 @@ impl PendingMessage {
     })
     .await?
   }
+
+  pub async fn delete_epoch(pool: Arc<DBPool>, filter_epoch_tag: i16) -> Result<(), PgStoreError> {
+    task::spawn_blocking(move || {
+      use crate::schema::pending_msgs::dsl::*;
+      let conn = pool.get()?;
+      diesel::delete(pending_msgs.filter(epoch_tag.eq(filter_epoch_tag))).execute(&conn)?;
+      Ok(())
+    })
+    .await?
+  }
 }
 
 #[async_trait]
