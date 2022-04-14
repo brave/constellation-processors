@@ -7,6 +7,7 @@ CREATE TABLE recovered_msgs (
 	parent_recovered_msg_id bigint null,
 	count bigint not null,
 	key bytea not null,
+	has_children boolean not null,
 	UNIQUE (msg_tag, epoch_tag)
 );
 CREATE INDEX on recovered_msgs (parent_recovered_msg_id);

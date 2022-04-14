@@ -1327,6 +1327,7 @@ dependencies = [
  "r2d2",
  "rand 0.8.5",
  "rdkafka",
+ "serde_json",
  "sta-rs",
  "tokio",
 ]

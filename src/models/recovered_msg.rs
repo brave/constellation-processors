@@ -12,9 +12,10 @@ pub struct RecoveredMessage {
   pub epoch_tag: i16,
   pub metric_name: String,
   pub metric_value: String,
+  pub key: Vec<u8>,
   pub parent_recovered_msg_id: Option<i64>,
   pub count: i64,
-  pub key: Vec<u8>,
+  pub has_children: bool,
 }
 
 #[derive(Insertable)]
@@ -27,6 +28,7 @@ pub struct NewRecoveredMessage {
   pub parent_recovered_msg_id: Option<i64>,
   pub count: i64,
   pub key: Vec<u8>,
+  pub has_children: bool,
 }
 
 impl RecoveredMessage {
@@ -44,6 +46,24 @@ impl RecoveredMessage {
         .execute(&conn)?;
 
       Ok(())
+    })
+    .await?
+  }
+
+  pub async fn find_by_parent(
+    db_pool: Arc<DBPool>,
+    parent_id: Option<i64>,
+  ) -> Result<Vec<Self>, PgStoreError> {
+    task::spawn_blocking(move || {
+      use crate::schema::recovered_msgs::dsl::*;
+
+      let conn = db_pool.get()?;
+      let mut q = recovered_msgs.into_boxed().filter(count.gt(0));
+      q = match parent_id {
+        Some(parent_id) => q.filter(parent_recovered_msg_id.eq(parent_id)),
+        None => q.filter(parent_recovered_msg_id.is_null()),
+      };
+      Ok(q.load(&conn)?)
     })
     .await?
   }

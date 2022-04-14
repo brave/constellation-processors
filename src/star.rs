@@ -85,11 +85,13 @@ pub fn recover_msgs(
   let unencrypted_layers: Vec<_> = messages.iter().map(|v| &v.unencrypted_layer).collect();
 
   let pms = recover(&unencrypted_layers, key)?;
-  let next_layer_messages = if pms[0].get_next_layer_key().is_some() {
+  let has_next_layer = pms.iter().any(|v| v.get_next_layer_key().is_some());
+  let next_layer_messages = if has_next_layer {
     Some(
       messages
         .into_iter()
         .zip(pms.iter())
+        .filter(|(_, pm)| pm.get_next_layer_key().as_ref().is_some())
         .map(|(mut msg, pm)| {
           let layer_key = pm.get_next_layer_key().as_ref().unwrap();
           msg.decrypt_next_layer(layer_key);

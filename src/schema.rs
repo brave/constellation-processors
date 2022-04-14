@@ -18,6 +18,7 @@ table! {
         key -> Bytea,
         parent_recovered_msg_id -> Nullable<Int8>,
         count -> Int8,
+        has_children -> Bool,
     }
 }
 

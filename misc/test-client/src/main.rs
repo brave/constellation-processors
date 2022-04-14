@@ -49,6 +49,7 @@ async fn main() {
             format!("layer{}|{}", i, r).as_bytes().to_vec()
           })
           .collect();
+        println!("{}", measurement_layers.iter().map(|v| std::str::from_utf8(v).unwrap()).collect::<Vec<_>>().join(" "));
         let example_aux = vec![];
 
         (0..cli_args.threshold)
