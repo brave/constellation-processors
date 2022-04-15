@@ -20,7 +20,7 @@ fn build_full_measurement_json(
 fn report_measurements_recursive<'a>(
   db_pool: &'a Arc<DBPool>,
   partial_report_epoch: Option<i16>,
-  out_stream: Option<&'a Box<dyn RecordStream + Send + Sync>>,
+  out_stream: Option<&'a RecordStream>,
   metric_chain: Vec<(String, String)>,
   parent_msg_id: Option<i64>,
 ) -> BoxFuture<'a, Result<i64, AggregatorError>> {
@@ -82,7 +82,7 @@ fn report_measurements_recursive<'a>(
 pub async fn report_measurements(
   db_pool: Arc<DBPool>,
   partial_report_epoch: Option<i16>,
-  out_stream: Option<&Box<dyn RecordStream + Send + Sync>>,
+  out_stream: Option<&RecordStream>,
 ) -> Result<(), AggregatorError> {
   info!(
     "Reporting {} measurements...",
@@ -93,8 +93,8 @@ pub async fn report_measurements(
     }
   );
   let count =
-    report_measurements_recursive(&db_pool, partial_report_epoch, out_stream, Vec::new(), None)
-      .await?;
+    report_measurements_recursive(&db_pool, partial_report_epoch,
+      out_stream, Vec::new(), None).await?;
   info!("Reported {} measurements", count);
   Ok(())
 }

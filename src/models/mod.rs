@@ -13,11 +13,15 @@ use std::env;
 use std::str::FromStr;
 use std::sync::Arc;
 
+const DATABASE_URL_ENV_KEY: &str = "DATABASE_URL";
+const MAX_CONN_ENV_KEY: &str = "DATABASE_MAX_CONN";
+const MAX_CONN_DEFAULT: &str = "32";
+
 pub type DBPool = Pool<ConnectionManager<PgConnection>>;
 
 pub fn create_db_pool() -> DBPool {
-  let db_url = env::var("DATABASE_URL").expect("DATABASE_URL env var must be defined");
-  let pool_max_size = u32::from_str(&env::var("DATABASE_MAX_CONN").unwrap_or("16".to_string()))
+  let db_url = env::var(DATABASE_URL_ENV_KEY).expect("DATABASE_URL env var must be defined");
+  let pool_max_size = u32::from_str(&env::var(MAX_CONN_ENV_KEY).unwrap_or(MAX_CONN_DEFAULT.to_string()))
     .expect("DATABASE_MAX_CONN must be a positive integer");
 
   let db_mgr = ConnectionManager::new(db_url);

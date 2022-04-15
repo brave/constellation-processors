@@ -4,6 +4,21 @@ networks:
   star-agg:
 
 services:
+  localstack:
+    image: localstack/localstack
+    ports:
+      - 4510-4559:4510-4559
+      - 4566:4566
+    environment:
+      - HOST_TMP_FOLDER=/tmp/localstack
+      - DOCKER_HOST=unix:///var/run/docker.sock
+      - LOCALSTACK_SERVICES=s3
+    volumes:
+      - "/tmp/localstack:/tmp/localstack"
+      - "/var/run/docker.sock:/var/run/docker.sock"
+      - "./misc/create_localstack_bucket.sh:/docker-entrypoint-initaws.d/create_bucket.sh"
+    networks:
+      - star-agg
   db:
     image: postgres
     restart: always

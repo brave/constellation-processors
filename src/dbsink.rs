@@ -15,7 +15,7 @@ pub enum DBSinkError {
 }
 
 pub async fn start_dbsink(
-  rec_stream: &(dyn RecordStream + Send + Sync),
+  rec_stream: RecordStream,
 ) -> Result<(), DBSinkError> {
   let db_pool = Arc::new(create_db_pool());
   let mut batch = Vec::with_capacity(BATCH_SIZE);
@@ -36,7 +36,7 @@ pub async fn start_dbsink(
     if batch.len() >= BATCH_SIZE {
       batch.insert_batch(db_pool.clone()).await?;
       rec_stream.commit_last_consume().await?;
-      debug!("Inserted batch, committed");
+      debug!("Inserted batch in DB, committed");
       batch = Vec::with_capacity(BATCH_SIZE);
     }
   }

@@ -7,12 +7,15 @@ use crate::record_stream::{RecordStream, RecordStreamError};
 use crate::star::AppSTARError;
 use derive_more::{Display, Error, From};
 use nested_sta_rs::errors::NestedSTARError;
+use tokio::task::JoinError;
+use std::sync::Arc;
 use pending::process_pending_msgs;
 use report::report_measurements;
 use std::env;
 use std::str::FromStr;
-use std::sync::Arc;
-use tokio::task::JoinError;
+
+const K_THRESHOLD_ENV_KEY: &str = "K_THRESHOLD";
+const K_THRESHOLD_DEFAULT: &str = "100";
 
 #[derive(Error, From, Display, Debug)]
 #[display(fmt = "Aggregator error: {}")]
@@ -27,7 +30,7 @@ pub enum AggregatorError {
 
 async fn process_expired_epochs(
   db_pool: Arc<DBPool>,
-  out_stream: Option<&Box<dyn RecordStream + Send + Sync>>,
+  out_stream: Option<&RecordStream>,
 ) -> Result<(), AggregatorError> {
   let current_epoch = get_current_epoch();
   let epochs = RecoveredMessage::list_distinct_epochs(db_pool.clone()).await?;
@@ -44,9 +47,9 @@ async fn process_expired_epochs(
 }
 
 pub async fn start_aggregation(
-  out_stream: Option<&Box<dyn RecordStream + Send + Sync>>,
+  out_stream: Option<RecordStream>,
 ) -> Result<(), AggregatorError> {
-  let k_threshold = usize::from_str(&env::var("K_THRESHOLD").unwrap_or("100".to_string()))
+  let k_threshold = usize::from_str(&env::var(K_THRESHOLD_ENV_KEY).unwrap_or(K_THRESHOLD_DEFAULT.to_string()))
     .expect("K_THRESHOLD must be a positive integer");
 
   let db_pool = Arc::new(create_db_pool());
@@ -61,10 +64,10 @@ pub async fn start_aggregation(
   process_pending_msgs(db_pool.clone(), k_threshold, true).await?;
   // Phase 3: Check for full recovered measurements, send off measurements to Kafka to be
   //          stored in data lake/warehouse
-  report_measurements(db_pool.clone(), None, out_stream).await?;
+  report_measurements(db_pool.clone(), None, out_stream.as_ref()).await?;
   // Phase 4: Check for expired epochs. Send off partial measurements.
   //          Delete pending/recovered messages from DB.
-  process_expired_epochs(db_pool.clone(), out_stream).await?;
+  process_expired_epochs(db_pool.clone(), out_stream.as_ref()).await?;
 
   info!("Finished aggregation");
   Ok(())

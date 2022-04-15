@@ -3,8 +3,6 @@ name = "nested-star-aggregator"
 version = "0.1.0"
 edition = "2021"
 
-# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
-
 [dependencies]
 nested-sta-rs = { git = "ssh://git@github.com/brave-experiments/nested-sta-rs", branch = "add-epoch-to-message" }
 sta-rs = { git = "https://github.com/brave-experiments/sta-rs", branch = "public-api-changes" }
@@ -26,3 +24,10 @@ async-trait = "0.1"
 rdkafka = "0.28"
 diesel = { version = "1.4", features = ["postgres", "r2d2"] }
 r2d2 = "0.8"
+chrono = "0.4"
+tokio-util = "0.7"
+rusoto_core = "0.47"
+rusoto_s3 = "0.47"
+
+[profile.dev]
+opt-level = 3
