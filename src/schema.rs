@@ -15,11 +15,14 @@ table! {
         epoch_tag -> Int2,
         metric_name -> Varchar,
         metric_value -> Varchar,
-        key -> Bytea,
         parent_recovered_msg_id -> Nullable<Int8>,
         count -> Int8,
+        key -> Bytea,
         has_children -> Bool,
     }
 }
 
-allow_tables_to_appear_in_same_query!(pending_msgs, recovered_msgs,);
+allow_tables_to_appear_in_same_query!(
+    pending_msgs,
+    recovered_msgs,
+);

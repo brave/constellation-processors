@@ -12,9 +12,9 @@ pub struct RecoveredMessage {
   pub epoch_tag: i16,
   pub metric_name: String,
   pub metric_value: String,
-  pub key: Vec<u8>,
   pub parent_recovered_msg_id: Option<i64>,
   pub count: i64,
+  pub key: Vec<u8>,
   pub has_children: bool,
 }
 

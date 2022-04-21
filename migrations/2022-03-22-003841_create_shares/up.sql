@@ -19,5 +19,4 @@ CREATE TABLE pending_msgs (
 	parent_recovered_msg_id bigint null,
 	message bytea not null
 );
-CREATE INDEX on pending_msgs (epoch_tag);
 CREATE INDEX on pending_msgs (msg_tag);

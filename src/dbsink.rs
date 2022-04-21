@@ -1,10 +1,10 @@
-use crate::models::{create_db_pool, BatchInsert, NewPendingMessage, PgStoreError};
+use crate::models::{DBPool, BatchInsert, NewPendingMessage, PgStoreError};
 use crate::record_stream::{RecordStream, RecordStreamError};
 use crate::star::{parse_message, AppSTARError};
 use derive_more::{Display, Error, From};
 use std::sync::Arc;
 
-const BATCH_SIZE: usize = 1000;
+const BATCH_SIZE: usize = 250;
 
 #[derive(Error, From, Display, Debug)]
 #[display(fmt = "DB sink error: {}")]
@@ -16,8 +16,8 @@ pub enum DBSinkError {
 
 pub async fn start_dbsink(
   rec_stream: RecordStream,
+  db_pool: Arc<DBPool>
 ) -> Result<(), DBSinkError> {
-  let db_pool = Arc::new(create_db_pool());
   let mut batch = Vec::with_capacity(BATCH_SIZE);
   loop {
     let record = rec_stream.consume().await?;

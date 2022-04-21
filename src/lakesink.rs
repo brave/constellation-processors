@@ -3,7 +3,7 @@ use crate::record_stream::{RecordStream, RecordStreamError};
 use derive_more::{Display, Error, From};
 use tokio_util::sync::CancellationToken;
 
-const BATCH_SIZE: usize = 2000;
+const BATCH_SIZE: usize = 750;
 
 #[derive(Error, From, Display, Debug)]
 #[display(fmt = "Lake sink error: {}")]

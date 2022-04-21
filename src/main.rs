@@ -20,9 +20,10 @@ use futures::future::try_join_all;
 use record_stream::RecordStream;
 use server::start_server;
 use std::process;
+use std::sync::Arc;
 use tokio_util::sync::CancellationToken;
 use lakesink::start_lakesink;
-
+use models::create_db_pool;
 use state::AppState;
 
 #[macro_use]
@@ -97,9 +98,11 @@ async fn main() {
   }
 
   if cli_args.db_sink {
+    let db_pool = Arc::new(create_db_pool());
     for _ in 0..cli_args.consumer_count {
+      let db_pool = db_pool.clone();
       tasks.push(tokio::spawn(async move {
-        let res = start_dbsink(RecordStream::new(false, true, false)).await;
+        let res = start_dbsink(RecordStream::new(false, true, false), db_pool).await;
         if let Err(e) = res {
           error!("DB sink task failed: {:?}", e);
           process::exit(1);
