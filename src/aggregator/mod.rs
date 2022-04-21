@@ -50,7 +50,7 @@ pub async fn start_aggregation(
   out_stream: Option<RecordStream>,
 ) -> Result<(), AggregatorError> {
   let k_threshold = usize::from_str(&env::var(K_THRESHOLD_ENV_KEY).unwrap_or(K_THRESHOLD_DEFAULT.to_string()))
-    .expect("K_THRESHOLD must be a positive integer");
+    .expect(format!("{} must be a positive integer", K_THRESHOLD_ENV_KEY).as_str());
 
   let db_pool = Arc::new(create_db_pool());
 

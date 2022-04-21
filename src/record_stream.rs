@@ -97,7 +97,8 @@ impl RecordStream {
   }
 
   fn new_client_config() -> ClientConfig {
-    let brokers = env::var(KAFKA_BROKERS_ENV_KEY).expect("KAFKA_BROKERS env var must be defined");
+    let brokers = env::var(KAFKA_BROKERS_ENV_KEY)
+      .expect(format!("{} env var must be defined", KAFKA_BROKERS_ENV_KEY).as_str());
     let mut result = ClientConfig::new();
     result.set("bootstrap.servers", brokers.clone());
     if env::var(KAFKA_ENABLE_PLAINTEXT_ENV_KEY).unwrap_or_default() == "true" {
@@ -141,7 +142,7 @@ impl RecordStream {
     let consumer = self.consumer.as_ref().expect("Kafka consumer not enabled");
     let tpl = self.tpl.lock().await;
     trace!("committing = {:?}", tpl);
-    consumer.commit(&tpl, CommitMode::Async)?;
+    consumer.commit(&tpl, CommitMode::Sync)?;
     Ok(())
   }
 }

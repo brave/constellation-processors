@@ -20,9 +20,10 @@ const MAX_CONN_DEFAULT: &str = "32";
 pub type DBPool = Pool<ConnectionManager<PgConnection>>;
 
 pub fn create_db_pool() -> DBPool {
-  let db_url = env::var(DATABASE_URL_ENV_KEY).expect("DATABASE_URL env var must be defined");
+  let db_url = env::var(DATABASE_URL_ENV_KEY)
+    .expect(format!("{} env var must be defined", DATABASE_URL_ENV_KEY).as_str());
   let pool_max_size = u32::from_str(&env::var(MAX_CONN_ENV_KEY).unwrap_or(MAX_CONN_DEFAULT.to_string()))
-    .expect("DATABASE_MAX_CONN must be a positive integer");
+    .expect(format!("{} must be a positive integer", MAX_CONN_ENV_KEY).as_str());
 
   let db_mgr = ConnectionManager::new(db_url);
   Pool::builder()
