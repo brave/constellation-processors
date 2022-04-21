@@ -127,9 +127,11 @@ async fn gen_msgs_from_data_and_save(csv_path: &str, cli_args: &CliArgs) {
             i, rec_chunks_len, j, chunk_len);
         }
       }
-      file.lock().await.write_all(
+      let mut file_guard = file.lock().await;
+      file_guard.write_all(
         task_msgs.join("\n").as_bytes()
       ).await.unwrap();
+      file_guard.write_all(b"\n").await.unwrap();
     })
   }).collect();
 
