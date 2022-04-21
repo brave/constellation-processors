@@ -7,7 +7,7 @@ use std::time::Instant;
 use std::sync::Arc;
 use std::path::PathBuf;
 use std::str::FromStr;
-use tokio::io::{AsyncReadExt, AsyncWriteExt};
+use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 use tokio::task::JoinHandle;
 use tokio::sync::Mutex;
 use tokio::fs::{File, OpenOptions};
@@ -138,31 +138,11 @@ async fn gen_msgs_from_data_and_save(csv_path: &str, cli_args: &CliArgs) {
   try_join_all(gen_tasks).await.unwrap();
 }
 
-#[tokio::main]
-async fn main() {
-  let cli_args = CliArgs::parse();
+async fn send_random_messages(cli_args: &CliArgs) {
+  println!("Generating random messages...");
+  let messages = gen_random_msgs(&cli_args).await;
 
-  if let Some(gen_data_file) = cli_args.gen_data_file.as_ref() {
-    println!("Generating messages from data file...");
-    gen_msgs_from_data_and_save(gen_data_file, &cli_args).await;
-    return;
-  }
-
-  let messages = if let Some(messages_file) = cli_args.messages_file {
-    let mut file = File::open(messages_file).await.unwrap();
-    let mut contents = String::new();
-    file.read_to_string(&mut contents).await.unwrap();
-    contents.split('\n').filter_map(|v| if !v.is_empty() {
-      Some(v.to_string())
-    } else {
-      None
-    }).collect()
-  } else {
-    println!("Generating random messages...");
-    gen_random_msgs(&cli_args).await
-  };
-
-  println!("Shuffling/splitting messages...");
+  println!("Splitting messages...");
 
   let message_count = messages.len();
 
@@ -190,6 +170,47 @@ async fn main() {
 
   try_join_all(tasks).await.unwrap();
 
+  calc_and_output_time(message_count, start_time);
+}
+
+async fn send_messages_from_file(cli_args: &CliArgs, messages_file: &str) {
+  let file = File::open(messages_file).await.unwrap();
+  let reader = Arc::new(Mutex::new(BufReader::new(file)));
+
+  println!("Sending requests...");
+
+  let start_time = Instant::now();
+
+  let tasks: Vec<_> = (0..cli_args.task_count)
+    .map(|_| {
+      let url = cli_args.url.clone();
+      let reader = reader.clone();
+      tokio::spawn(async move {
+        let client = reqwest::Client::new();
+        let mut count = 0;
+        loop {
+          let mut msg = String::new();
+          if reader.lock().await.read_line(&mut msg).await.unwrap() == 0 {
+            break;
+          }
+          if msg.is_empty() {
+            continue;
+          }
+          client.post(&url).body(msg).send().await.unwrap();
+          count += 1;
+        }
+        count
+      })
+    })
+    .collect();
+
+  let task_results = try_join_all(tasks).await.unwrap();
+  let message_count = task_results.iter().fold(0, |acc, r| acc + r);
+
+  calc_and_output_time(message_count, start_time);
+}
+
+fn calc_and_output_time(message_count: usize, start_time: Instant) {
   let time_taken = start_time.elapsed().as_secs_f64();
   let rate = message_count as f64 / time_taken;
 
@@ -197,4 +218,23 @@ async fn main() {
     "Sent {} messages, took {} seconds, rate {} reqs/s",
     message_count, time_taken, rate
   );
+}
+
+#[tokio::main]
+async fn main() {
+  let cli_args = CliArgs::parse();
+
+  if let Some(gen_data_file) = cli_args.gen_data_file.as_ref() {
+    println!("Generating messages from data file...");
+    gen_msgs_from_data_and_save(gen_data_file, &cli_args).await;
+    return;
+  }
+
+  if let Some(messages_file) = cli_args.messages_file.as_ref() {
+    send_messages_from_file(&cli_args, messages_file).await;
+  } else {
+    println!("Generating random messages...");
+    send_random_messages(&cli_args).await;
+  }
+
 }
