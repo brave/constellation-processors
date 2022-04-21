@@ -11,7 +11,7 @@ use nested_sta_rs::api::NestedMessage;
 use std::cmp::max;
 use std::sync::Arc;
 
-const WORKER_COUNT: usize = 32;
+const WORKER_COUNT: usize = 256;
 
 async fn save_next_layer_messages(
   db_pool: Arc<DBPool>,

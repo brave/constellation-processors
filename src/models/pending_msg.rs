@@ -6,8 +6,9 @@ use async_trait::async_trait;
 use diesel::pg::types::sql_types::Bytea;
 use diesel::sql_types::{BigInt, Nullable, SmallInt};
 use diesel::{sql_query, ExpressionMethods, QueryDsl, RunQueryDsl};
+use futures::future::try_join_all;
 use std::sync::Arc;
-use tokio::task;
+use tokio::task::{self, JoinHandle};
 
 #[derive(Queryable, Debug)]
 pub struct PendingMessage {
@@ -18,7 +19,7 @@ pub struct PendingMessage {
   pub message: Vec<u8>,
 }
 
-#[derive(Insertable)]
+#[derive(Insertable, Clone)]
 #[table_name = "pending_msgs"]
 pub struct NewPendingMessage {
   pub msg_tag: Vec<u8>,
@@ -76,14 +77,21 @@ impl PendingMessage {
 #[async_trait]
 impl BatchInsert<NewPendingMessage> for Vec<NewPendingMessage> {
   async fn insert_batch(self, pool: Arc<DBPool>) -> Result<(), PgStoreError> {
-    task::spawn_blocking(move || {
-      let conn = pool.get()?;
-      diesel::insert_into(pending_msgs::table)
-        .values(self)
-        .execute(&conn)?;
-      Ok(())
-    })
-    .await?
+    let tasks: Vec<JoinHandle<Result<(), PgStoreError>>> = self.chunks(10000).map(|v| {
+      let chunk = v.to_vec();
+      let pool = pool.clone();
+      task::spawn_blocking(move || {
+        let conn = pool.get()?;
+        diesel::insert_into(pending_msgs::table)
+          .values(chunk)
+          .execute(&conn)?;
+        Ok(())
+      })
+    }).collect();
+    for res in try_join_all(tasks).await? {
+      res?;
+    }
+    Ok(())
   }
 }
 
@@ -91,13 +99,20 @@ impl BatchInsert<NewPendingMessage> for Vec<NewPendingMessage> {
 impl BatchDelete<PendingMessage> for Vec<PendingMessage> {
   async fn delete_batch(&self, pool: Arc<DBPool>) -> Result<(), PgStoreError> {
     let msg_ids: Vec<i64> = self.iter().map(|v| v.id).collect();
-    task::spawn_blocking(move || {
-      use crate::schema::pending_msgs::dsl::*;
-      let conn = pool.get()?;
-      diesel::delete(pending_msgs.filter(id.eq_any(msg_ids))).execute(&conn)?;
-      Ok(())
-    })
-    .await?
+    let tasks: Vec<JoinHandle<Result<(), PgStoreError>>> = msg_ids.chunks(10000).map(|v| {
+      let chunk = v.to_vec();
+      let pool = pool.clone();
+      task::spawn_blocking(move || {
+        use crate::schema::pending_msgs::dsl::*;
+        let conn = pool.get()?;
+        diesel::delete(pending_msgs.filter(id.eq_any(chunk))).execute(&conn)?;
+        Ok(())
+      })
+    }).collect();
+    for res in try_join_all(tasks).await? {
+      res?;
+    }
+    Ok(())
   }
 }
 

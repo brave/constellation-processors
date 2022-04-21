@@ -15,7 +15,7 @@ use std::sync::Arc;
 
 const DATABASE_URL_ENV_KEY: &str = "DATABASE_URL";
 const MAX_CONN_ENV_KEY: &str = "DATABASE_MAX_CONN";
-const MAX_CONN_DEFAULT: &str = "32";
+const MAX_CONN_DEFAULT: &str = "100";
 
 pub type DBPool = Pool<ConnectionManager<PgConnection>>;
 
