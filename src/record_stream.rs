@@ -82,7 +82,7 @@ impl RecordStream {
         config
           .set("group.id", "star-agg")
           .set("enable.auto.commit", "false")
-          .set("session.timeout.ms", "6000")
+          .set("session.timeout.ms", "21000")
           .create_with_context(context)
           .unwrap(),
       );
