@@ -6,9 +6,10 @@ use async_trait::async_trait;
 use diesel::pg::types::sql_types::Bytea;
 use diesel::sql_types::{BigInt, Nullable, SmallInt};
 use diesel::{sql_query, ExpressionMethods, QueryDsl, RunQueryDsl};
-use futures::future::try_join_all;
 use std::sync::Arc;
-use tokio::task::{self, JoinHandle};
+use tokio::task;
+
+const BATCH_SIZE: i64 = 20000;
 
 #[derive(Queryable, Debug)]
 pub struct PendingMessage {
@@ -29,13 +30,11 @@ pub struct NewPendingMessage {
 }
 
 #[derive(QueryableByName, Debug, Clone)]
-pub struct PendingMessageCount {
+pub struct RecoverablePendingTag {
   #[sql_type = "SmallInt"]
   pub epoch_tag: i16,
   #[sql_type = "Bytea"]
   pub msg_tag: Vec<u8>,
-  #[sql_type = "BigInt"]
-  pub count: i64,
   #[sql_type = "Nullable<BigInt>"]
   pub recovered_msg_id: Option<i64>,
   #[sql_type = "Nullable<Bytea>"]
@@ -49,6 +48,7 @@ impl PendingMessage {
     pool: Arc<DBPool>,
     filter_epoch_tag: i16,
     filter_msg_tag: Vec<u8>,
+    after_id: i64
   ) -> Result<Vec<Self>, PgStoreError> {
     task::spawn_blocking(move || {
       use crate::schema::pending_msgs::dsl::*;
@@ -57,6 +57,9 @@ impl PendingMessage {
         pending_msgs
           .filter(epoch_tag.eq(filter_epoch_tag))
           .filter(msg_tag.eq(filter_msg_tag))
+          .filter(id.gt(after_id))
+          .order(id.asc())
+          .limit(BATCH_SIZE)
           .load(&conn)?,
       )
     })
@@ -77,21 +80,14 @@ impl PendingMessage {
 #[async_trait]
 impl BatchInsert<NewPendingMessage> for Vec<NewPendingMessage> {
   async fn insert_batch(self, pool: Arc<DBPool>) -> Result<(), PgStoreError> {
-    let tasks: Vec<JoinHandle<Result<(), PgStoreError>>> = self.chunks(10000).map(|v| {
-      let chunk = v.to_vec();
-      let pool = pool.clone();
-      task::spawn_blocking(move || {
-        let conn = pool.get()?;
-        diesel::insert_into(pending_msgs::table)
-          .values(chunk)
-          .execute(&conn)?;
-        Ok(())
-      })
-    }).collect();
-    for res in try_join_all(tasks).await? {
-      res?;
-    }
-    Ok(())
+    task::spawn_blocking(move || {
+      let conn = pool.get()?;
+      diesel::insert_into(pending_msgs::table)
+        .values(self)
+        .execute(&conn)?;
+      Ok(())
+    })
+    .await?
   }
 }
 
@@ -99,30 +95,23 @@ impl BatchInsert<NewPendingMessage> for Vec<NewPendingMessage> {
 impl BatchDelete<PendingMessage> for Vec<PendingMessage> {
   async fn delete_batch(&self, pool: Arc<DBPool>) -> Result<(), PgStoreError> {
     let msg_ids: Vec<i64> = self.iter().map(|v| v.id).collect();
-    let tasks: Vec<JoinHandle<Result<(), PgStoreError>>> = msg_ids.chunks(10000).map(|v| {
-      let chunk = v.to_vec();
-      let pool = pool.clone();
-      task::spawn_blocking(move || {
-        use crate::schema::pending_msgs::dsl::*;
-        let conn = pool.get()?;
-        diesel::delete(pending_msgs.filter(id.eq_any(chunk))).execute(&conn)?;
-        Ok(())
-      })
-    }).collect();
-    for res in try_join_all(tasks).await? {
-      res?;
-    }
-    Ok(())
+    task::spawn_blocking(move || {
+      use crate::schema::pending_msgs::dsl::*;
+      let conn = pool.get()?;
+      diesel::delete(pending_msgs.filter(id.eq_any(msg_ids))).execute(&conn)?;
+      Ok(())
+    })
+    .await?
   }
 }
 
-impl PendingMessageCount {
+impl RecoverablePendingTag {
   pub async fn count_new(pool: Arc<DBPool>, min_count: usize) -> Result<Vec<Self>, PgStoreError> {
     task::spawn_blocking(move || {
       let conn = pool.get()?;
       Ok(
         sql_query(
-          "SELECT p.epoch_tag, p.msg_tag, COUNT(*) as count, \
+          "SELECT p.epoch_tag, p.msg_tag, \
             null as recovered_msg_id, null as key, null as recovered_count \
           FROM pending_msgs p \
           LEFT JOIN recovered_msgs r ON r.epoch_tag = p.epoch_tag AND r.msg_tag = p.msg_tag \
@@ -142,7 +131,7 @@ impl PendingMessageCount {
       let conn = pool.get()?;
       Ok(
         sql_query(
-          "SELECT p.epoch_tag, p.msg_tag, COUNT(*) as count, \
+          "SELECT p.epoch_tag, p.msg_tag, \
             r.id as recovered_msg_id, r.key, r.count as recovered_count \
           FROM pending_msgs p \
           JOIN recovered_msgs r ON r.epoch_tag = p.epoch_tag AND r.msg_tag = p.msg_tag \
