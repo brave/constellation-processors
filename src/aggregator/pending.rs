@@ -35,7 +35,7 @@ async fn save_next_layer_messages(
 
 async fn process_new_tag(
   db_pool: &Arc<DBPool>,
-  tag_info: &RecoverablePendingTag,
+  tag_info: &mut RecoverablePendingTag,
   pending_msgs: Vec<PendingMessage>,
   nested_msgs: Vec<NestedMessage>,
   k_threshold: usize,
@@ -70,11 +70,15 @@ async fn process_new_tag(
     metric_value: msg_rec.measurement.1,
     parent_recovered_msg_id: pending_msgs[0].parent_recovered_msg_id,
     count: pending_msgs.len() as i64,
-    key: recovered_key,
+    key: recovered_key.clone(),
     has_children: msg_rec.next_layer_messages.is_some(),
   };
 
   let rec_msg_id = new_rec_msg.insert(db_pool.clone()).await?;
+
+  tag_info.recovered_msg_id = Some(rec_msg_id);
+  tag_info.key = Some(recovered_key);
+  tag_info.recovered_count = Some(pending_msgs.len() as i64);
 
   if let Some(next_layer_messages) = msg_rec.next_layer_messages {
     save_next_layer_messages(
@@ -92,7 +96,7 @@ async fn process_new_tag(
 
 async fn process_recovered_tag(
   db_pool: &Arc<DBPool>,
-  tag_info: &RecoverablePendingTag,
+  tag_info: &mut RecoverablePendingTag,
   pending_msgs: Vec<PendingMessage>,
   nested_msgs: Vec<NestedMessage>,
 ) -> Result<bool, AggregatorError> {
@@ -109,6 +113,7 @@ async fn process_recovered_tag(
   };
 
   let new_count = tag_info.recovered_count.unwrap() + (pending_msgs.len() as i64);
+  tag_info.recovered_count = Some(new_count);
   RecoveredMessage::update_count(db_pool.clone(), tag_info.recovered_msg_id.unwrap(), new_count)
     .await?;
 
@@ -171,10 +176,11 @@ pub async fn process_pending_msgs(
       .into_iter()
       .map(|tag_infos| {
         let db_pool = db_pool.clone();
-        let tag_infos = tag_infos.to_vec();
+        let mut tag_infos = tag_infos.to_vec();
+        let chunk_len = tag_infos.len();
         tokio::spawn(async move {
           let mut has_processed = false;
-          for (i, tag_info) in tag_infos.iter().enumerate() {
+          for (i, tag_info) in tag_infos.iter_mut().enumerate() {
             let mut last_pending_msg_id = 0;
             // Loop through the "pages" of pending messages (max 10000 each page)
             loop {
@@ -186,9 +192,10 @@ pub async fn process_pending_msgs(
                 break;
               }
 
+              let is_first_page = last_pending_msg_id == 0;
               last_pending_msg_id = pending_msgs.last().unwrap().id;
 
-              let process_res = if check_new {
+              let process_res = if check_new && is_first_page {
                 process_new_tag(&db_pool, tag_info, pending_msgs, nested_msgs, k_threshold).await
               } else {
                 process_recovered_tag(&db_pool, tag_info, pending_msgs, nested_msgs).await
@@ -199,7 +206,7 @@ pub async fn process_pending_msgs(
                 has_processed = true;
               }
               if i > 0 && i % 20 == 0 {
-                info!("Processed {}/{} tags in chunk", i + 1, tag_infos.len());
+                info!("Processed {}/{} tags in chunk", i + 1, chunk_len);
               }
             }
             debug!("Processed tag {}", hex::encode(&tag_info.msg_tag));
