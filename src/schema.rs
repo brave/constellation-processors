@@ -3,7 +3,6 @@ table! {
         id -> Int8,
         msg_tag -> Bytea,
         epoch_tag -> Int2,
-        parent_recovered_msg_id -> Nullable<Int8>,
         message -> Bytea,
     }
 }
@@ -15,7 +14,7 @@ table! {
         epoch_tag -> Int2,
         metric_name -> Varchar,
         metric_value -> Varchar,
-        parent_recovered_msg_id -> Nullable<Int8>,
+        parent_recovered_msg_tag -> Nullable<Bytea>,
         count -> Int8,
         key -> Bytea,
         has_children -> Bool,

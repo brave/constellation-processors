@@ -4,7 +4,7 @@ version = "0.1.0"
 edition = "2021"
 
 [dependencies]
-nested-sta-rs = { git = "ssh://git@github.com/brave-experiments/nested-sta-rs", branch = "add-epoch-to-message" }
+nested-sta-rs = { git = "ssh://git@github.com/brave-experiments/nested-sta-rs", branch = "main" }
 sta-rs = { git = "https://github.com/brave-experiments/sta-rs", branch = "public-api-changes" }
 actix-web = "4"
 env_logger = "0.9"

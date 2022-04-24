@@ -50,3 +50,7 @@ services:
       - zookeeper
     networks:
       - star-agg
+    volumes:
+      - kafka-data:/bitnami/kafka
+volumes:
+  kafka-data:

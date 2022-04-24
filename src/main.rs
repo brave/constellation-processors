@@ -1,5 +1,4 @@
 mod aggregator;
-mod dbsink;
 mod epoch;
 mod models;
 mod record_stream;
@@ -13,7 +12,6 @@ mod lakesink;
 use actix_web::web::Data;
 use aggregator::start_aggregation;
 use clap::Parser;
-use dbsink::start_dbsink;
 use dotenv::dotenv;
 use env_logger::Env;
 use futures::future::try_join_all;
@@ -23,7 +21,6 @@ use std::process;
 use std::sync::Arc;
 use tokio_util::sync::CancellationToken;
 use lakesink::start_lakesink;
-use models::create_db_pool;
 use state::AppState;
 
 #[macro_use]
@@ -37,9 +34,6 @@ extern crate diesel;
 struct CliArgs {
   #[clap(short, long)]
   server: bool,
-
-  #[clap(short, long)]
-  db_sink: bool,
 
   #[clap(short, long)]
   lake_sink: bool,
@@ -59,7 +53,7 @@ async fn main() {
   // TODO: sigint-triggered graceful shutdown
   let cli_args = CliArgs::parse();
 
-  if !cli_args.server && !cli_args.db_sink && !cli_args.aggregator && !cli_args.lake_sink {
+  if !cli_args.server && !cli_args.aggregator && !cli_args.lake_sink {
     panic!("Must select process mode! Use -h switch for more details.");
   }
 
@@ -89,26 +83,12 @@ async fn main() {
     let out_stream = if cli_args.output_measurements_to_stdout {
       None
     } else {
-      Some(RecordStream::new(true, false, true))
+      Some(Arc::new(RecordStream::new(true, false, true)))
     };
     start_aggregation(out_stream).await.unwrap();
     lakesink_cancel_tokens.iter().for_each(|t| t.cancel());
     try_join_all(tasks).await.unwrap();
     return;
-  }
-
-  if cli_args.db_sink {
-    let db_pool = Arc::new(create_db_pool());
-    for _ in 0..cli_args.consumer_count {
-      let db_pool = db_pool.clone();
-      tasks.push(tokio::spawn(async move {
-        let res = start_dbsink(RecordStream::new(false, true, false), db_pool).await;
-        if let Err(e) = res {
-          error!("DB sink task failed: {:?}", e);
-          process::exit(1);
-        }
-      }));
-    }
   }
 
   if cli_args.server {

@@ -1,9 +1,8 @@
 use super::AggregatorError;
-use crate::models::{DBPool, RecoveredMessage};
+use super::recovered::RecoveredMessages;
 use crate::record_stream::RecordStream;
 use futures::future::{BoxFuture, FutureExt};
 use std::collections::HashMap;
-use std::sync::Arc;
 
 fn build_full_measurement_json(
   metric_chain: Vec<(String, String)>,
@@ -18,40 +17,41 @@ fn build_full_measurement_json(
 }
 
 fn report_measurements_recursive<'a>(
-  db_pool: &'a Arc<DBPool>,
-  partial_report_epoch: Option<i16>,
+  rec_msgs: &'a mut RecoveredMessages,
+  epoch: u8,
+  partial_report: bool,
   out_stream: Option<&'a RecordStream>,
   metric_chain: Vec<(String, String)>,
-  parent_msg_id: Option<i64>,
+  parent_msg_tag: Option<Vec<u8>>,
 ) -> BoxFuture<'a, Result<i64, AggregatorError>> {
   async move {
-    let msgs =
-      RecoveredMessage::find_by_parent(db_pool.clone(), parent_msg_id, partial_report_epoch)
-        .await?;
+    let tags = rec_msgs.get_tags_by_parent(epoch, parent_msg_tag);
 
     let mut recovered_count = 0;
 
-    for mut msg in msgs {
+    for tag in tags {
+      let mut msg = rec_msgs.get_mut(epoch, &tag).unwrap().clone();
       if msg.count == 0 {
         continue;
       }
 
       let mut metric_chain = metric_chain.clone();
-      metric_chain.push((msg.metric_name, msg.metric_value));
+      metric_chain.push((msg.metric_name.clone(), msg.metric_value.clone()));
 
       let is_final = if msg.has_children {
         let children_rec_count = report_measurements_recursive(
-          db_pool,
-          partial_report_epoch,
+          rec_msgs,
+          epoch,
+          partial_report,
           out_stream,
           metric_chain.clone(),
-          Some(msg.id),
+          Some(tag),
         )
         .await?;
 
         msg.count -= children_rec_count;
 
-        if msg.count > 0 && partial_report_epoch.is_some() {
+        if msg.count > 0 && partial_report {
           true
         } else {
           recovered_count += children_rec_count;
@@ -68,10 +68,9 @@ fn report_measurements_recursive<'a>(
           Some(o) => o.produce(&full_msmt).await?,
           None => println!("{}", full_msmt),
         };
-        RecoveredMessage::update_count(db_pool.clone(), msg.id, 0).await?;
-      } else {
-        RecoveredMessage::update_count(db_pool.clone(), msg.id, msg.count).await?;
+        msg.count = 0;
       }
+      rec_msgs.add(msg);
     }
 
     Ok(recovered_count)
@@ -80,21 +79,13 @@ fn report_measurements_recursive<'a>(
 }
 
 pub async fn report_measurements(
-  db_pool: Arc<DBPool>,
-  partial_report_epoch: Option<i16>,
+  rec_msgs: &mut RecoveredMessages,
+  epoch: u8,
+  partial_report: bool,
   out_stream: Option<&RecordStream>,
-) -> Result<(), AggregatorError> {
-  info!(
-    "Reporting {} measurements...",
-    if partial_report_epoch.is_some() {
-      "partial"
-    } else {
-      "full"
-    }
-  );
-  let count =
-    report_measurements_recursive(&db_pool, partial_report_epoch,
-      out_stream, Vec::new(), None).await?;
-  info!("Reported {} measurements", count);
-  Ok(())
+) -> Result<i64, AggregatorError> {
+  Ok(
+    report_measurements_recursive(rec_msgs, epoch, partial_report,
+      out_stream, Vec::new(), None).await?
+  )
 }

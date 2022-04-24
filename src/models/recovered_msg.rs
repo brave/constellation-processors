@@ -1,37 +1,71 @@
-use super::DBPool;
+use super::{DBPool, BatchInsert};
 use crate::models::PgStoreError;
 use crate::schema::recovered_msgs;
 use diesel::{ExpressionMethods, QueryDsl, RunQueryDsl};
 use std::sync::Arc;
 use tokio::task;
+use async_trait::async_trait;
 
-#[derive(Queryable)]
+#[derive(Queryable, Clone)]
 pub struct RecoveredMessage {
   pub id: i64,
   pub msg_tag: Vec<u8>,
   pub epoch_tag: i16,
   pub metric_name: String,
   pub metric_value: String,
-  pub parent_recovered_msg_id: Option<i64>,
+  pub parent_recovered_msg_tag: Option<Vec<u8>>,
   pub count: i64,
   pub key: Vec<u8>,
   pub has_children: bool,
 }
 
-#[derive(Insertable)]
+#[derive(Insertable, Clone)]
 #[table_name = "recovered_msgs"]
 pub struct NewRecoveredMessage {
   pub msg_tag: Vec<u8>,
   pub epoch_tag: i16,
   pub metric_name: String,
   pub metric_value: String,
-  pub parent_recovered_msg_id: Option<i64>,
+  pub parent_recovered_msg_tag: Option<Vec<u8>>,
   pub count: i64,
   pub key: Vec<u8>,
   pub has_children: bool,
 }
 
+impl From<RecoveredMessage> for NewRecoveredMessage {
+  fn from(msg: RecoveredMessage) -> Self {
+    Self {
+      msg_tag: msg.msg_tag,
+      epoch_tag: msg.epoch_tag,
+      metric_name: msg.metric_name,
+      metric_value: msg.metric_value,
+      parent_recovered_msg_tag: msg.parent_recovered_msg_tag,
+      count: msg.count,
+      key: msg.key,
+      has_children: msg.has_children
+    }
+  }
+}
+
 impl RecoveredMessage {
+  pub async fn list(
+    db_pool: Arc<DBPool>,
+    filter_epoch_tag: i16,
+    filter_msg_tags: Vec<Vec<u8>>
+  ) -> Result<Vec<RecoveredMessage>, PgStoreError> {
+    task::spawn_blocking(move || {
+      use crate::schema::recovered_msgs::dsl::*;
+      let conn = db_pool.get()?;
+      Ok(
+        recovered_msgs
+          .filter(epoch_tag.eq(filter_epoch_tag))
+          .filter(msg_tag.eq_any(filter_msg_tags))
+          .load(&conn)?
+      )
+    })
+    .await?
+  }
+
   pub async fn update_count(
     db_pool: Arc<DBPool>,
     curr_id: i64,
@@ -50,24 +84,20 @@ impl RecoveredMessage {
     .await?
   }
 
-  pub async fn find_by_parent(
+  pub async fn list_with_nonzero_count(
     db_pool: Arc<DBPool>,
-    parent_id: Option<i64>,
-    filter_epoch_tag: Option<i16>,
+    filter_epoch_tag: i16,
   ) -> Result<Vec<Self>, PgStoreError> {
     task::spawn_blocking(move || {
       use crate::schema::recovered_msgs::dsl::*;
 
       let conn = db_pool.get()?;
-      let mut q = recovered_msgs.into_boxed().filter(count.gt(0));
-      q = match parent_id {
-        Some(parent_id) => q.filter(parent_recovered_msg_id.eq(parent_id)),
-        None => q.filter(parent_recovered_msg_id.is_null()),
-      };
-      if let Some(filter_epoch_tag) = filter_epoch_tag {
-        q = q.filter(epoch_tag.eq(filter_epoch_tag));
-      }
-      Ok(q.load(&conn)?)
+      Ok(
+        recovered_msgs
+          .filter(epoch_tag.eq(filter_epoch_tag))
+          .filter(count.gt(0))
+          .load(&conn)?
+      )
     })
     .await?
   }
@@ -98,17 +128,15 @@ impl RecoveredMessage {
   }
 }
 
-impl NewRecoveredMessage {
-  pub async fn insert(self, db_pool: Arc<DBPool>) -> Result<i64, PgStoreError> {
+#[async_trait]
+impl BatchInsert<NewRecoveredMessage> for Vec<NewRecoveredMessage> {
+  async fn insert_batch(self, db_pool: Arc<DBPool>) -> Result<(), PgStoreError> {
     task::spawn_blocking(move || {
-      use crate::schema::recovered_msgs::dsl::id;
       let conn = db_pool.get()?;
-      Ok(
-        diesel::insert_into(recovered_msgs::table)
-          .values(&self)
-          .returning(id)
-          .get_result::<i64>(&conn)?,
-      )
+      diesel::insert_into(recovered_msgs::table)
+        .values(self)
+        .execute(&conn)?;
+      Ok(())
     })
     .await?
   }

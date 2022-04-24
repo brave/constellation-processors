@@ -36,8 +36,3 @@ pub fn create_db_pool() -> DBPool {
 pub trait BatchInsert<T> {
   async fn insert_batch(self, pool: Arc<DBPool>) -> Result<(), PgStoreError>;
 }
-
-#[async_trait]
-pub trait BatchDelete<T> {
-  async fn delete_batch(&self, pool: Arc<DBPool>) -> Result<(), PgStoreError>;
-}

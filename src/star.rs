@@ -4,6 +4,7 @@ use nested_sta_rs::api::{
 };
 use nested_sta_rs::errors::NestedSTARError;
 use std::str::{from_utf8, Utf8Error};
+use std::cmp::min;
 
 #[derive(Error, From, Display, Debug)]
 pub enum AppSTARError {
@@ -24,14 +25,9 @@ pub struct ParsedMessageData {
   pub bincode_msg: Vec<u8>,
 }
 
-pub struct SerializedMessageWithTag {
-  pub message: Vec<u8>,
-  pub tag: Vec<u8>,
-}
-
 pub struct MsgRecoveryInfo {
   pub measurement: (String, String),
-  pub next_layer_messages: Option<Vec<SerializedMessageWithTag>>,
+  pub next_layer_messages: Option<Vec<NestedMessage>>,
 }
 
 pub fn parse_message(record: &str) -> Result<ParsedMessageData, AppSTARError> {
@@ -47,7 +43,7 @@ pub fn parse_message_bincode(bincode_msg: &[u8]) -> Result<NestedMessage, AppSTA
   Ok(NestedMessage::from(smsg))
 }
 
-fn serialize_message_bincode(message: NestedMessage) -> Result<Vec<u8>, AppSTARError> {
+pub fn serialize_message_bincode(message: NestedMessage) -> Result<Vec<u8>, AppSTARError> {
   let smsg = SerializableNestedMessage::from(message);
   Ok(bincode::serialize(&smsg)?)
 }
@@ -70,7 +66,8 @@ pub fn recover_key(
   epoch_tag: u8,
   k_threshold: usize,
 ) -> Result<Vec<u8>, AppSTARError> {
-  let unencrypted_layers: Vec<_> = messages[..k_threshold]
+  let msgs_to_use = min(k_threshold + (k_threshold / 3), messages.len());
+  let unencrypted_layers: Vec<_> = messages[..msgs_to_use]
     .iter()
     .map(|v| &v.unencrypted_layer)
     .collect();
@@ -95,13 +92,9 @@ pub fn recover_msgs(
         .map(|(mut msg, pm)| {
           let layer_key = pm.get_next_layer_key().as_ref().unwrap();
           msg.decrypt_next_layer(layer_key);
-          let tag = msg.unencrypted_layer.tag.clone();
-          Ok(SerializedMessageWithTag {
-            message: serialize_message_bincode(msg)?,
-            tag,
-          })
+          msg
         })
-        .collect::<Result<Vec<SerializedMessageWithTag>, AppSTARError>>()?,
+        .collect()
     )
   } else {
     None
@@ -109,6 +102,6 @@ pub fn recover_msgs(
 
   Ok(MsgRecoveryInfo {
     measurement: get_measurement_contents(&pms[0])?,
-    next_layer_messages,
+    next_layer_messages
   })
 }
