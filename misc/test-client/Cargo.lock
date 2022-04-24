@@ -144,9 +144,9 @@ dependencies = [
 
 [[package]]
 name = "clap"
-version = "3.1.10"
+version = "3.1.12"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "3124f3f75ce09e22d1410043e1e24f2ecc44fad3afe4f08408f1f7663d68da2b"
+checksum = "7c167e37342afc5f33fd87bbc870cedd020d2a6dffa05d45ccd9241fbdd146db"
 dependencies = [
  "atty",
  "bitflags",
@@ -852,7 +852,7 @@ dependencies = [
 [[package]]
 name = "nested-sta-rs"
 version = "0.1.0"
-source = "git+ssh://git@github.com/brave-experiments/nested-sta-rs?branch=add-epoch-to-message#3de4a25701c0dd4394b848421682dd6c0c481e9d"
+source = "git+ssh://git@github.com/brave-experiments/nested-sta-rs?branch=fix-nested-randomness#294056f51fb16687342b59d4d1fe91c653226702"
 dependencies = [
  "base64",
  "bincode",
@@ -1562,7 +1562,7 @@ dependencies = [
 name = "test-client"
 version = "0.1.0"
 dependencies = [
- "clap 3.1.10",
+ "clap 3.1.12",
  "csv",
  "futures",
  "nested-sta-rs",
