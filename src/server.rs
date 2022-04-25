@@ -1,5 +1,5 @@
+use crate::record_stream::RecordStream;
 use crate::star::{parse_message, AppSTARError};
-use crate::state::AppState;
 use actix_web::{
   error::ResponseError,
   http::{header::ContentType, StatusCode},
@@ -20,6 +20,10 @@ pub enum WebError {
   Internal,
 }
 
+pub struct ServerState {
+  pub rec_stream: RecordStream,
+}
+
 impl ResponseError for WebError {
   fn error_response(&self) -> HttpResponse {
     HttpResponse::build(self.status_code())
@@ -36,7 +40,10 @@ impl ResponseError for WebError {
 }
 
 #[post("/")]
-async fn main_handler(body: web::Bytes, state: Data<AppState>) -> Result<impl Responder, WebError> {
+async fn main_handler(
+  body: web::Bytes,
+  state: Data<ServerState>,
+) -> Result<impl Responder, WebError> {
   // TODO: add proper error handling, check if body is valid base64
   let body_str = from_utf8(&body)?.trim();
   parse_message(body_str)?;
@@ -48,9 +55,13 @@ async fn main_handler(body: web::Bytes, state: Data<AppState>) -> Result<impl Re
   }
 }
 
-pub async fn start_server(state: Data<AppState>) -> std::io::Result<()> {
+pub async fn start_server(worker_count: usize) -> std::io::Result<()> {
+  let state = Data::new(ServerState {
+    rec_stream: RecordStream::new(true, false, false),
+  });
   info!("Starting server...");
   HttpServer::new(move || App::new().app_data(state.clone()).service(main_handler))
+    .workers(worker_count)
     .bind(("0.0.0.0", 8080))?
     .run()
     .await

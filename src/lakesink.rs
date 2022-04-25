@@ -27,13 +27,12 @@ async fn store_batch(
   Ok(())
 }
 
-pub async fn start_lakesink(
-  rec_stream: RecordStream,
-  cancel_token: CancellationToken,
-) -> Result<(), LakeSinkError> {
+pub async fn start_lakesink(cancel_token: CancellationToken) -> Result<(), LakeSinkError> {
   let batch_size =
     usize::from_str(&env::var(BATCH_SIZE_ENV_KEY).unwrap_or(BATCH_SIZE_DEFAULT.to_string()))
       .unwrap_or_else(|_| panic!("{} must be a positive integer", BATCH_SIZE_ENV_KEY));
+
+  let rec_stream = RecordStream::new(false, true, true);
 
   let lake = DataLake::new();
   let mut batch = Vec::with_capacity(batch_size);

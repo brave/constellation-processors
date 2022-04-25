@@ -5,11 +5,11 @@ use crate::star::parse_message;
 use std::time::Duration;
 use tokio::time::sleep;
 
-const MAX_MESSAGES_TO_COLLECT: usize = 650000;
 const RECV_TIMEOUT_MS: u64 = 2500;
 
-pub async fn consume_and_group() -> Result<(GroupedMessages, RecordStream, usize), AggregatorError>
-{
+pub async fn consume_and_group(
+  msg_collect_count: usize,
+) -> Result<(GroupedMessages, RecordStream, usize), AggregatorError> {
   let mut count = 0;
   let mut grouped_msgs = GroupedMessages::default();
 
@@ -22,7 +22,7 @@ pub async fn consume_and_group() -> Result<(GroupedMessages, RecordStream, usize
 
         grouped_msgs.add(msg_data.msg, None);
         count += 1;
-        if count >= MAX_MESSAGES_TO_COLLECT {
+        if count >= msg_collect_count {
           break;
         }
       },

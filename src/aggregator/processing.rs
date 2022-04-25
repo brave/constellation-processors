@@ -43,16 +43,22 @@ fn process_one_layer(
 
   for (epoch, epoch_map) in &mut grouped_msgs.msg_chunks {
     for (msg_tag, chunk) in epoch_map {
-      if chunk.new_msgs.len() + chunk.pending_msgs.len() < k_threshold {
+      let existing_rec_msg = rec_msgs.get_mut(*epoch, msg_tag);
+      // if we don't have a key for this tag, check to see if it meets the k threshold
+      // if not, skip it
+      if existing_rec_msg.is_none() && chunk.new_msgs.len() + chunk.pending_msgs.len() < k_threshold
+      {
         continue;
       }
+      // concat new messages from kafka, and pending messages from PG into one vec
       let mut msgs = Vec::new();
       msgs.append(&mut chunk.new_msgs);
       for pending_msg in chunk.pending_msgs.drain(..) {
         msgs.push(parse_message_bincode(&pending_msg.message)?);
       }
 
-      let existing_rec_msg = rec_msgs.get_mut(*epoch, msg_tag);
+      // if a recovered msg exists, use the key that was already recovered.
+      // otherwise, recover the key
       let key = if let Some(rec_msg) = existing_rec_msg.as_ref() {
         rec_msg.key.clone()
       } else {
@@ -66,6 +72,7 @@ fn process_one_layer(
         next_layer_messages,
       } = recover_msgs(msgs, &key)?;
 
+      // create or update recovered msg with new count
       if let Some(rec_msg) = existing_rec_msg {
         rec_msg.count += msgs_len;
       } else {
@@ -82,6 +89,7 @@ fn process_one_layer(
         });
       }
 
+      // save messages in the next layer in a new GroupedMessages struct
       if let Some(child_msgs) = next_layer_messages {
         for msg in child_msgs {
           next_grouped_msgs.add(msg, Some(msg_tag));
