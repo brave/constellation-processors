@@ -1,0 +1,72 @@
+on:
+  push:
+  pull_request:
+
+name: Checks
+
+jobs:
+  test:
+    name: ${{matrix.rust}} on ${{matrix.os}}
+    runs-on: ${{matrix.os}}
+
+    strategy:
+      matrix:
+        rust: [1.59.0]
+        os: [ubuntu-20.04]
+
+    env:
+      RUSTFLAGS: ''
+      CARGO_PROFILE_DEV_DEBUG: '0' # reduce size of target directory
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v2
+
+      - name: Toolchain
+        uses: actions-rs/toolchain@v1
+        with:
+          profile: minimal
+          components: clippy, rustfmt
+          toolchain: ${{matrix.rust}}
+          override: true
+
+      - name: Cache
+        uses: Swatinem/rust-cache@v1
+
+      - name: Format
+        uses: actions-rs/cargo@v1
+        with:
+          command: fmt
+          args: --check
+
+      # Uncomment once nested-sta-rs goes public
+      # - name: Build
+      #   uses: actions-rs/cargo@v1
+      #   with:
+      #     command: build
+      #     args: --release --all-targets
+
+      # - name: Clippy
+      #   uses: actions-rs/clippy-check@v1
+      #   with:
+      #     token: ${{ secrets.GITHUB_TOKEN }}
+      #     args: --release --all-targets -- -D warnings -A clippy::too_many_arguments
+
+      - name: Test Client Format
+        uses: actions-rs/cargo@v1
+        with:
+          command: fmt
+          args: --check --manifest-path misc/test-client/Cargo.toml
+
+      # Uncomment once nested-sta-rs goes public
+      # - name: Test Client Build
+      #   uses: actions-rs/cargo@v1
+      #   with:
+      #     command: build
+      #     args: --release --all-targets --manifest-path misc/test-client/Cargo.toml
+
+      # - name: Test Client Clippy
+      #   uses: actions-rs/clippy-check@v1
+      #   with:
+      #     token: ${{ secrets.GITHUB_TOKEN }}
+      #     args: --release --all-targets -- -D warnings -A clippy::too_many_arguments --manifest-path misc/test-client/Cargo.toml
