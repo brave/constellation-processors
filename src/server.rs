@@ -44,7 +44,6 @@ async fn main_handler(
   body: web::Bytes,
   state: Data<ServerState>,
 ) -> Result<impl Responder, WebError> {
-  // TODO: add proper error handling, check if body is valid base64
   let body_str = from_utf8(&body)?.trim();
   parse_message(body_str)?;
   if let Err(e) = state.rec_stream.produce(body_str).await {

@@ -9,7 +9,7 @@ mod server;
 mod star;
 
 use aggregator::start_aggregation;
-use clap::Parser;
+use clap::{ArgGroup, Parser};
 use dotenv::dotenv;
 use env_logger::Env;
 use epoch::get_current_epoch;
@@ -27,43 +27,51 @@ extern crate diesel;
 
 #[derive(Parser, Debug, Clone)]
 #[clap(version, about)]
+#[clap(group(
+    ArgGroup::new("process-mode")
+      .required(true)
+      .multiple(true)
+      .args(&["aggregator", "lake-sink", "server"])
+))]
 struct CliArgs {
-  #[clap(short, long)]
+  #[clap(short, long, help = "Enable server mode")]
   server: bool,
 
-  #[clap(short, long)]
+  #[clap(short, long, help = "Enable lake sink mode")]
   lake_sink: bool,
 
-  #[clap(short, long)]
+  #[clap(short, long, help = "Enable aggregator mode")]
   aggregator: bool,
 
-  #[clap(long)]
+  #[clap(
+    long,
+    help = "Output aggregated measurements to stdout instead of Kafka"
+  )]
   output_measurements_to_stdout: bool,
 
-  #[clap(long, default_value = "16")]
+  #[clap(long, default_value = "16", help = "Worker task count for aggregator")]
   agg_worker_count: usize,
 
-  #[clap(long, default_value = "650000")]
+  #[clap(
+    long,
+    default_value = "650000",
+    help = "Max messages to consume per aggregator iteration"
+  )]
   agg_msg_collect_count: usize,
 
-  #[clap(long, default_value = "3")]
+  #[clap(long, default_value = "3", help = "Max iterations for aggregator")]
   agg_iterations: usize,
 
-  #[clap(long, default_value = "16")]
+  #[clap(long, default_value = "16", help = "Worker task count for server")]
   server_worker_count: usize,
 
-  #[clap(long, default_value = "2")]
+  #[clap(long, default_value = "2", help = "Kafka consumer count for lake sink")]
   lakesink_consumer_count: usize,
 }
 
 #[tokio::main]
 async fn main() {
-  // TODO: sigint-triggered graceful shutdown
   let cli_args = CliArgs::parse();
-
-  if !cli_args.server && !cli_args.aggregator && !cli_args.lake_sink {
-    panic!("Must select process mode! Use -h switch for more details.");
-  }
 
   dotenv().ok();
   env_logger::Builder::from_env(Env::default().default_filter_or("info")).init();
