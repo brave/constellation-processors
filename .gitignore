@@ -1,1 +1,5 @@
 /target
+.env
+buffer
+local_notes
+*.sqldump

@@ -1,0 +1,56 @@
+version: '3.9'
+
+networks:
+  star-agg:
+
+services:
+  localstack:
+    image: localstack/localstack
+    ports:
+      - 4510-4559:4510-4559
+      - 4566:4566
+    environment:
+      - HOST_TMP_FOLDER=/tmp/localstack
+      - DOCKER_HOST=unix:///var/run/docker.sock
+      - LOCALSTACK_SERVICES=s3
+    volumes:
+      - "/tmp/localstack:/tmp/localstack"
+      - "/var/run/docker.sock:/var/run/docker.sock"
+      - "./misc/create_localstack_bucket.sh:/docker-entrypoint-initaws.d/create_bucket.sh"
+    networks:
+      - star-agg
+  db:
+    image: postgres
+    restart: always
+    ports:
+      - 5642:5432
+    environment:
+      POSTGRES_USER: star
+      POSTGRES_PASSWORD: password
+    networks:
+      - star-agg
+
+  zookeeper:
+    image: bitnami/zookeeper
+    environment:
+      - ALLOW_ANONYMOUS_LOGIN=yes
+    networks:
+      - star-agg
+  kafka:
+    image: bitnami/kafka
+    ports:
+      - 9092:9092
+    environment:
+      - KAFKA_CFG_ZOOKEEPER_CONNECT=zookeeper:2181
+      - KAFKA_CFG_NUM_PARTITIONS=4
+      - ALLOW_PLAINTEXT_LISTENER=yes
+      - KAFKA_CFG_AUTO_CREATE_TOPICS_ENABLE=true
+      - KAFKA_CFG_ADVERTISED_LISTENERS=PLAINTEXT://localhost:9092
+    depends_on:
+      - zookeeper
+    networks:
+      - star-agg
+    volumes:
+      - kafka-data:/bitnami/kafka
+volumes:
+  kafka-data:
