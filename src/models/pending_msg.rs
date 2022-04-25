@@ -1,5 +1,5 @@
-use super::DBPool;
 use super::BatchInsert;
+use super::DBPool;
 use crate::models::PgStoreError;
 use crate::schema::pending_msgs;
 use async_trait::async_trait;
@@ -27,7 +27,7 @@ impl PendingMessage {
   pub async fn list(
     pool: Arc<DBPool>,
     filter_epoch_tag: i16,
-    filter_msg_tag: Vec<u8>
+    filter_msg_tag: Vec<u8>,
   ) -> Result<Vec<Self>, PgStoreError> {
     task::spawn_blocking(move || {
       use crate::schema::pending_msgs::dsl::*;
@@ -36,7 +36,7 @@ impl PendingMessage {
         pending_msgs
           .filter(epoch_tag.eq(filter_epoch_tag))
           .filter(msg_tag.eq(filter_msg_tag))
-          .load(&conn)?
+          .load(&conn)?,
       )
     })
     .await?
@@ -55,7 +55,7 @@ impl PendingMessage {
   pub async fn delete_tag(
     pool: Arc<DBPool>,
     filter_epoch_tag: i16,
-    filter_msg_tag: Vec<u8>
+    filter_msg_tag: Vec<u8>,
   ) -> Result<(), PgStoreError> {
     task::spawn_blocking(move || {
       use crate::schema::pending_msgs::dsl::*;
@@ -63,8 +63,9 @@ impl PendingMessage {
       diesel::delete(
         pending_msgs
           .filter(epoch_tag.eq(filter_epoch_tag))
-          .filter(msg_tag.eq(filter_msg_tag))
-      ).execute(&conn)?;
+          .filter(msg_tag.eq(filter_msg_tag)),
+      )
+      .execute(&conn)?;
       Ok(())
     })
     .await?

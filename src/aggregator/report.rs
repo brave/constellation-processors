@@ -1,5 +1,5 @@
-use super::AggregatorError;
 use super::recovered::RecoveredMessages;
+use super::AggregatorError;
 use crate::record_stream::RecordStream;
 use futures::future::{BoxFuture, FutureExt};
 use std::collections::HashMap;
@@ -85,7 +85,14 @@ pub async fn report_measurements(
   out_stream: Option<&RecordStream>,
 ) -> Result<i64, AggregatorError> {
   Ok(
-    report_measurements_recursive(rec_msgs, epoch, partial_report,
-      out_stream, Vec::new(), None).await?
+    report_measurements_recursive(
+      rec_msgs,
+      epoch,
+      partial_report,
+      out_stream,
+      Vec::new(),
+      None,
+    )
+    .await?,
   )
 }

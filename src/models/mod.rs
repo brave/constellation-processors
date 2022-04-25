@@ -21,9 +21,10 @@ pub type DBPool = Pool<ConnectionManager<PgConnection>>;
 
 pub fn create_db_pool() -> DBPool {
   let db_url = env::var(DATABASE_URL_ENV_KEY)
-    .expect(format!("{} env var must be defined", DATABASE_URL_ENV_KEY).as_str());
-  let pool_max_size = u32::from_str(&env::var(MAX_CONN_ENV_KEY).unwrap_or(MAX_CONN_DEFAULT.to_string()))
-    .expect(format!("{} must be a positive integer", MAX_CONN_ENV_KEY).as_str());
+    .unwrap_or_else(|_| panic!("{} env var must be defined", DATABASE_URL_ENV_KEY));
+  let pool_max_size =
+    u32::from_str(&env::var(MAX_CONN_ENV_KEY).unwrap_or(MAX_CONN_DEFAULT.to_string()))
+      .unwrap_or_else(|_| panic!("{} must be a positive integer", MAX_CONN_ENV_KEY));
 
   let db_mgr = ConnectionManager::new(db_url);
   Pool::builder()

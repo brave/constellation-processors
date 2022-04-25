@@ -27,7 +27,7 @@ pub fn get_current_epoch() -> u8 {
 
 pub fn is_epoch_expired(epoch: u8, mut current_epoch: u8) -> bool {
   let mut diff = 0;
-  if current_epoch < FIRST_EPOCH || current_epoch > LAST_EPOCH {
+  if !(FIRST_EPOCH..=LAST_EPOCH).contains(&current_epoch) {
     return true;
   }
   while current_epoch != epoch {

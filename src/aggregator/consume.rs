@@ -1,14 +1,15 @@
-use super::AggregatorError;
 use super::group::GroupedMessages;
-use tokio::time::sleep;
-use std::time::Duration;
+use super::AggregatorError;
 use crate::record_stream::RecordStream;
 use crate::star::parse_message;
+use std::time::Duration;
+use tokio::time::sleep;
 
 const MAX_MESSAGES_TO_COLLECT: usize = 650000;
 const RECV_TIMEOUT_MS: u64 = 2500;
 
-pub async fn consume_and_group() -> Result<(GroupedMessages, RecordStream, usize), AggregatorError> {
+pub async fn consume_and_group() -> Result<(GroupedMessages, RecordStream, usize), AggregatorError>
+{
   let mut count = 0;
   let mut grouped_msgs = GroupedMessages::default();
 

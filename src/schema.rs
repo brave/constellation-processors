@@ -21,7 +21,4 @@ table! {
     }
 }
 
-allow_tables_to_appear_in_same_query!(
-    pending_msgs,
-    recovered_msgs,
-);
+allow_tables_to_appear_in_same_query!(pending_msgs, recovered_msgs,);

@@ -1,6 +1,6 @@
 use super::AggregatorError;
+use crate::models::{BatchInsert, DBPool, NewRecoveredMessage, RecoveredMessage};
 use std::collections::{HashMap, HashSet};
-use crate::models::{DBPool, RecoveredMessage, NewRecoveredMessage, BatchInsert};
 use std::sync::Arc;
 
 type EpochRecMsgsMap = HashMap<Vec<u8>, RecoveredMessage>;
@@ -12,18 +12,19 @@ type ParentTagsMap = HashMap<u8, EpochParentTagsMap>;
 #[derive(Default)]
 pub struct RecoveredMessages {
   pub map: RecMsgsMap,
-  pub parent_tags_map: ParentTagsMap
+  pub parent_tags_map: ParentTagsMap,
 }
 
 const INSERT_BATCH_SIZE: usize = 10000;
 
 impl RecoveredMessages {
   pub fn add(&mut self, rec_msg: RecoveredMessage) {
-    let parent_epoch_map = self.parent_tags_map.entry(rec_msg.epoch_tag as u8).or_default();
-    let parent_msg_tag_key = rec_msg.parent_recovered_msg_tag.clone().unwrap_or_default();
-    let parent_tag_set = parent_epoch_map
-      .entry(parent_msg_tag_key)
+    let parent_epoch_map = self
+      .parent_tags_map
+      .entry(rec_msg.epoch_tag as u8)
       .or_default();
+    let parent_msg_tag_key = rec_msg.parent_recovered_msg_tag.clone().unwrap_or_default();
+    let parent_tag_set = parent_epoch_map.entry(parent_msg_tag_key).or_default();
     parent_tag_set.insert(rec_msg.msg_tag.clone());
     let epoch_map = self.map.entry(rec_msg.epoch_tag as u8).or_default();
     epoch_map.insert(rec_msg.msg_tag.clone(), rec_msg);
@@ -35,17 +36,20 @@ impl RecoveredMessages {
   }
 
   pub fn get_tags_by_parent(&self, epoch: u8, parent_msg_tag: Option<Vec<u8>>) -> Vec<Vec<u8>> {
-    self.parent_tags_map.get(&epoch).unwrap()
+    self
+      .parent_tags_map
+      .get(&epoch)
+      .unwrap()
       .get(&parent_msg_tag.unwrap_or_default())
       .map(|s| s.iter().cloned().collect())
-      .unwrap_or(Vec::new())
+      .unwrap_or_default()
   }
 
   pub async fn fetch_recovered(
     &mut self,
     db_pool: Arc<DBPool>,
     epoch: u8,
-    msg_tags: Vec<Vec<u8>>
+    msg_tags: Vec<Vec<u8>>,
   ) -> Result<(), AggregatorError> {
     let recovered_msgs = RecoveredMessage::list(db_pool.clone(), epoch as i16, msg_tags).await?;
     for rec_msg in recovered_msgs {
@@ -57,7 +61,7 @@ impl RecoveredMessages {
   pub async fn fetch_all_recovered_with_nonzero_count(
     &mut self,
     db_pool: Arc<DBPool>,
-    epoch: u8
+    epoch: u8,
   ) -> Result<(), AggregatorError> {
     let recovered_msgs = RecoveredMessage::list_with_nonzero_count(db_pool, epoch as i16).await?;
     for rec_msg in recovered_msgs {

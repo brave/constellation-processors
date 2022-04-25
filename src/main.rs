@@ -1,13 +1,13 @@
 mod aggregator;
 mod epoch;
+mod lake;
+mod lakesink;
 mod models;
 mod record_stream;
 mod schema;
 mod server;
 mod star;
 mod state;
-mod lake;
-mod lakesink;
 
 use actix_web::web::Data;
 use aggregator::start_aggregation;
@@ -15,13 +15,13 @@ use clap::Parser;
 use dotenv::dotenv;
 use env_logger::Env;
 use futures::future::try_join_all;
+use lakesink::start_lakesink;
 use record_stream::RecordStream;
 use server::start_server;
+use state::AppState;
 use std::process;
 use std::sync::Arc;
 use tokio_util::sync::CancellationToken;
-use lakesink::start_lakesink;
-use state::AppState;
 
 #[macro_use]
 extern crate log;
@@ -68,8 +68,7 @@ async fn main() {
       let cancel_token = CancellationToken::new();
       let cloned_token = cancel_token.clone();
       tasks.push(tokio::spawn(async move {
-        let res = start_lakesink(RecordStream::new(false, true, true),
-          cloned_token.clone()).await;
+        let res = start_lakesink(RecordStream::new(false, true, true), cloned_token.clone()).await;
         if let Err(e) = res {
           error!("Lake sink task failed: {:?}", e);
           process::exit(1);

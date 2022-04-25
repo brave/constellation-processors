@@ -1,9 +1,9 @@
 use crate::lake::{DataLake, DataLakeError};
 use crate::record_stream::{RecordStream, RecordStreamError};
 use derive_more::{Display, Error, From};
-use tokio_util::sync::CancellationToken;
 use std::env;
 use std::str::FromStr;
+use tokio_util::sync::CancellationToken;
 
 const BATCH_SIZE_ENV_KEY: &str = "LAKE_SINK_BATCH_SIZE";
 const BATCH_SIZE_DEFAULT: &str = "1000";
@@ -12,13 +12,13 @@ const BATCH_SIZE_DEFAULT: &str = "1000";
 #[display(fmt = "Lake sink error: {}")]
 pub enum LakeSinkError {
   RecordStream(RecordStreamError),
-  Lake(DataLakeError)
+  Lake(DataLakeError),
 }
 
 async fn store_batch(
   lake: &DataLake,
   rec_stream: &RecordStream,
-  batch: &[String]
+  batch: &[String],
 ) -> Result<(), LakeSinkError> {
   let contents = batch.join("\n");
   lake.store(&contents).await?;
@@ -29,11 +29,11 @@ async fn store_batch(
 
 pub async fn start_lakesink(
   rec_stream: RecordStream,
-  cancel_token: CancellationToken
+  cancel_token: CancellationToken,
 ) -> Result<(), LakeSinkError> {
-  let batch_size = usize::from_str(
-    &env::var(BATCH_SIZE_ENV_KEY).unwrap_or(BATCH_SIZE_DEFAULT.to_string())
-  ).expect(format!("{} must be a positive integer", BATCH_SIZE_ENV_KEY).as_str());
+  let batch_size =
+    usize::from_str(&env::var(BATCH_SIZE_ENV_KEY).unwrap_or(BATCH_SIZE_DEFAULT.to_string()))
+      .unwrap_or_else(|_| panic!("{} must be a positive integer", BATCH_SIZE_ENV_KEY));
 
   let lake = DataLake::new();
   let mut batch = Vec::with_capacity(batch_size);

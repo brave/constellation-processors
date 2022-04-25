@@ -852,7 +852,7 @@ dependencies = [
 [[package]]
 name = "nested-sta-rs"
 version = "0.1.0"
-source = "git+ssh://git@github.com/brave-experiments/nested-sta-rs?branch=fix-nested-randomness#294056f51fb16687342b59d4d1fe91c653226702"
+source = "git+ssh://git@github.com/brave-experiments/nested-sta-rs?branch=main#711f5748c8fbacf7274b40acd51b73f7d624720a"
 dependencies = [
  "base64",
  "bincode",

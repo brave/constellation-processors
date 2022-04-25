@@ -1,9 +1,9 @@
-use std::env;
-use rand::random;
-use rusoto_s3::{S3, S3Client, PutObjectRequest, PutObjectError};
-use rusoto_core::{Region, RusotoError, ByteStream};
-use derive_more::{From, Error, Display};
 use chrono::prelude::Utc;
+use derive_more::{Display, Error, From};
+use rand::random;
+use rusoto_core::{ByteStream, Region, RusotoError};
+use rusoto_s3::{PutObjectError, PutObjectRequest, S3Client, S3};
+use std::env;
 
 const S3_ENDPOINT_ENV_VAR: &str = "S3_ENDPOINT";
 const OUTPUT_S3_BUCKET_ENV_KEY: &str = "S3_OUTPUT_BUCKET";
@@ -17,25 +17,22 @@ pub enum DataLakeError {
 
 pub struct DataLake {
   s3: S3Client,
-  bucket_name: String
+  bucket_name: String,
 }
 
 impl DataLake {
   pub fn new() -> Self {
     let region = match env::var(S3_ENDPOINT_ENV_VAR) {
-      Ok(endpoint) => {
-        Region::Custom {
-          name: "us-west-2".to_string(),
-          endpoint
-        }
+      Ok(endpoint) => Region::Custom {
+        name: "us-west-2".to_string(),
+        endpoint,
       },
-      Err(_) => Default::default()
+      Err(_) => Default::default(),
     };
     Self {
       s3: S3Client::new(region),
-      bucket_name: env::var(
-        OUTPUT_S3_BUCKET_ENV_KEY
-      ).unwrap_or(DEFAULT_OUTPUT_BUCKET_NAME.to_string())
+      bucket_name: env::var(OUTPUT_S3_BUCKET_ENV_KEY)
+        .unwrap_or(DEFAULT_OUTPUT_BUCKET_NAME.to_string()),
     }
   }
 
@@ -43,16 +40,19 @@ impl DataLake {
     let rand_key: u64 = random();
     let full_key = format!(
       "{}/{}.jsonl",
-      Utc::today().naive_utc().to_string(),
+      Utc::today().naive_utc(),
       hex::encode(rand_key.to_le_bytes())
     );
     let contents = contents.as_bytes().to_vec();
-    self.s3.put_object(PutObjectRequest {
-      body: Some(ByteStream::from(contents)),
-      bucket: self.bucket_name.clone(),
-      key: full_key,
-      ..Default::default()
-    }).await?;
+    self
+      .s3
+      .put_object(PutObjectRequest {
+        body: Some(ByteStream::from(contents)),
+        bucket: self.bucket_name.clone(),
+        key: full_key,
+        ..Default::default()
+      })
+      .await?;
     Ok(())
   }
 }

@@ -1,16 +1,16 @@
+use derive_more::{Display, Error, From};
 use rdkafka::client::ClientContext;
 use rdkafka::config::ClientConfig;
 use rdkafka::consumer::{
   stream_consumer::StreamConsumer, CommitMode, Consumer, ConsumerContext, Rebalance,
 };
-use rdkafka::error::{KafkaResult, KafkaError};
+use rdkafka::error::{KafkaError, KafkaResult};
 use rdkafka::message::Message;
 use rdkafka::producer::{future_producer::FutureProducer, FutureRecord};
 use rdkafka::topic_partition_list::{Offset, TopicPartitionList};
 use std::env;
 use std::time::Duration;
 use tokio::sync::Mutex;
-use derive_more::{Display, Error, From};
 
 const KAFKA_ENC_TOPIC_ENV_KEY: &str = "KAFKA_ENCRYPTED_TOPIC";
 const KAFKA_OUT_TOPIC_ENV_KEY: &str = "KAFKA_OUTPUT_TOPIC";
@@ -23,7 +23,7 @@ const KAFKA_ENABLE_PLAINTEXT_ENV_KEY: &str = "KAFKA_ENABLE_PLAINTEXT";
 #[display(fmt = "Record stream error: {}")]
 pub enum RecordStreamError {
   Kafka(KafkaError),
-  Deserialize
+  Deserialize,
 }
 
 struct KafkaContext;
@@ -99,9 +99,9 @@ impl RecordStream {
 
   fn new_client_config() -> ClientConfig {
     let brokers = env::var(KAFKA_BROKERS_ENV_KEY)
-      .expect(format!("{} env var must be defined", KAFKA_BROKERS_ENV_KEY).as_str());
+      .unwrap_or_else(|_| panic!("{} env var must be defined", KAFKA_BROKERS_ENV_KEY));
     let mut result = ClientConfig::new();
-    result.set("bootstrap.servers", brokers.clone());
+    result.set("bootstrap.servers", brokers);
     if env::var(KAFKA_ENABLE_PLAINTEXT_ENV_KEY).unwrap_or_default() == "true" {
       result.set("security.protocol", "plaintext");
     }

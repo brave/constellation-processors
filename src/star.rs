@@ -3,8 +3,8 @@ use nested_sta_rs::api::{
   key_recover, recover, NestedMessage, PartialMeasurement, SerializableNestedMessage,
 };
 use nested_sta_rs::errors::NestedSTARError;
-use std::str::{from_utf8, Utf8Error};
 use std::cmp::min;
+use std::str::{from_utf8, Utf8Error};
 
 #[derive(Error, From, Display, Debug)]
 pub enum AppSTARError {
@@ -94,7 +94,7 @@ pub fn recover_msgs(
           msg.decrypt_next_layer(layer_key);
           msg
         })
-        .collect()
+        .collect(),
     )
   } else {
     None
@@ -102,6 +102,6 @@ pub fn recover_msgs(
 
   Ok(MsgRecoveryInfo {
     measurement: get_measurement_contents(&pms[0])?,
-    next_layer_messages
+    next_layer_messages,
   })
 }

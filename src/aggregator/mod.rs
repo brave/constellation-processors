@@ -1,21 +1,21 @@
-mod report;
-mod group;
 mod consume;
-mod recovered;
+mod group;
 mod processing;
+mod recovered;
+mod report;
 
 use crate::models::{create_db_pool, PgStoreError};
 use crate::record_stream::{RecordStream, RecordStreamError};
 use crate::star::AppSTARError;
-use derive_more::{Display, Error, From};
-use nested_sta_rs::errors::NestedSTARError;
-use tokio::task::JoinError;
-use std::sync::Arc;
 use consume::consume_and_group;
+use derive_more::{Display, Error, From};
+use futures::future::try_join_all;
+use nested_sta_rs::errors::NestedSTARError;
 use processing::{process_expired_epochs, start_subtask};
 use std::env;
 use std::str::FromStr;
-use futures::future::try_join_all;
+use std::sync::Arc;
+use tokio::task::JoinError;
 
 const K_THRESHOLD_ENV_KEY: &str = "K_THRESHOLD";
 const K_THRESHOLD_DEFAULT: &str = "100";
@@ -35,8 +35,9 @@ pub enum AggregatorError {
 pub async fn start_aggregation(
   out_stream: Option<Arc<RecordStream>>,
 ) -> Result<(), AggregatorError> {
-  let k_threshold = usize::from_str(&env::var(K_THRESHOLD_ENV_KEY).unwrap_or(K_THRESHOLD_DEFAULT.to_string()))
-    .expect(format!("{} must be a positive integer", K_THRESHOLD_ENV_KEY).as_str());
+  let k_threshold =
+    usize::from_str(&env::var(K_THRESHOLD_ENV_KEY).unwrap_or(K_THRESHOLD_DEFAULT.to_string()))
+      .unwrap_or_else(|_| panic!("{} must be a positive integer", K_THRESHOLD_ENV_KEY));
 
   let db_pool = Arc::new(create_db_pool());
 
@@ -52,13 +53,16 @@ pub async fn start_aggregation(
   }
   info!("Consumed {} messages", count);
 
-  let tasks: Vec<_> = grouped_msgs.split(TASK_COUNT).into_iter().enumerate().map(|(i, v)| {
-    start_subtask(i, db_pool.clone(), out_stream.clone(), v, k_threshold)
-  }).collect();
+  let tasks: Vec<_> = grouped_msgs
+    .split(TASK_COUNT)
+    .into_iter()
+    .enumerate()
+    .map(|(i, v)| start_subtask(i, db_pool.clone(), out_stream.clone(), v, k_threshold))
+    .collect();
 
   let measurement_counts = try_join_all(tasks).await?;
 
-  let total_measurement_count = measurement_counts.iter().fold(0, |acc, x| acc + x);
+  let total_measurement_count = measurement_counts.iter().sum::<i64>();
   info!("Reported {} final measurements", total_measurement_count);
 
   // Check for expired epochs. Send off partial measurements.

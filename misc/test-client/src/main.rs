@@ -3,14 +3,14 @@ use futures::future::try_join_all;
 use nested_sta_rs::api::*;
 use nested_sta_rs::randomness::testing::LocalFetcher as RandomnessFetcher;
 use rand::{thread_rng, Rng};
-use std::time::Instant;
-use std::sync::Arc;
 use std::path::PathBuf;
 use std::str::FromStr;
-use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
-use tokio::task::JoinHandle;
-use tokio::sync::Mutex;
+use std::sync::Arc;
+use std::time::Instant;
 use tokio::fs::{File, OpenOptions};
+use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
+use tokio::sync::Mutex;
+use tokio::task::JoinHandle;
 
 const DATA_GEN_TASKS: usize = 128;
 
@@ -49,9 +49,8 @@ fn generate_messages(layers: &[Vec<u8>], cli_args: &CliArgs, count: usize) -> Ve
     .map(|_| {
       let rsf = client::format_measurement(layers, cli_args.epoch).unwrap();
       let mgf = client::sample_randomness(&rnd_fetcher, rsf, &None).unwrap();
-      let msg = client::construct_message(mgf, &example_aux, cli_args.threshold).unwrap();
 
-      msg
+      client::construct_message(mgf, &example_aux, cli_args.threshold).unwrap()
     })
     .collect()
 }
@@ -87,69 +86,88 @@ async fn gen_random_msgs(cli_args: &CliArgs) -> Vec<String> {
 
 async fn gen_msgs_from_data_and_save(csv_path: &str, cli_args: &CliArgs) {
   let mut rdr = csv::Reader::from_path(csv_path).unwrap();
-  let header: Vec<String> = rdr.headers().unwrap().iter().map(|v| v.to_string()).collect();
-  let records: Vec<Vec<String>> = rdr.records().map(|rec_res| {
-    let rec = rec_res.unwrap();
-    rec.iter().map(|v| v.trim().to_string()).collect()
-  }).collect();
+  let header: Vec<String> = rdr
+    .headers()
+    .unwrap()
+    .iter()
+    .map(|v| v.to_string())
+    .collect();
+  let records: Vec<Vec<String>> = rdr
+    .records()
+    .map(|rec_res| {
+      let rec = rec_res.unwrap();
+      rec.iter().map(|v| v.trim().to_string()).collect()
+    })
+    .collect();
 
   let mut new_path = PathBuf::from(csv_path);
   new_path.set_extension("b64l");
   let file = Arc::new(Mutex::new(
-    OpenOptions::new().create(true).append(true).open(new_path).await.unwrap()
+    OpenOptions::new()
+      .create(true)
+      .append(true)
+      .open(new_path)
+      .await
+      .unwrap(),
   ));
 
-  let rec_chunks: Vec<Vec<Vec<String>>> =
-    records.chunks(records.len() / DATA_GEN_TASKS).map(|v| v.to_vec()).collect();
+  let rec_chunks: Vec<Vec<Vec<String>>> = records
+    .chunks(records.len() / DATA_GEN_TASKS)
+    .map(|v| v.to_vec())
+    .collect();
   let rec_chunks_len = rec_chunks.len();
 
-  let gen_tasks: Vec<JoinHandle<()>> = rec_chunks.into_iter().enumerate().map(|(i, rec_chunk)| {
-    let header = header.clone();
-    let cli_args = cli_args.clone();
-    let file = file.clone();
-    tokio::spawn(async move {
-      let mut task_msgs = Vec::new();
-      let chunk_len = rec_chunk.len();
-      for (j, rec) in rec_chunk.into_iter().enumerate() {
-        let total = usize::from_str(rec.last().unwrap()).unwrap();
-        let layers: Vec<Vec<u8>> = header[..header.len() - 1]
-          .iter()
-          .zip(rec[..rec.len() - 1].iter())
-          .map(|(name, value)| format!("{}|{}", name, value).as_bytes().to_vec())
-          .collect();
+  let gen_tasks: Vec<JoinHandle<()>> = rec_chunks
+    .into_iter()
+    .enumerate()
+    .map(|(i, rec_chunk)| {
+      let header = header.clone();
+      let cli_args = cli_args.clone();
+      let file = file.clone();
+      tokio::spawn(async move {
+        let mut task_msgs = Vec::new();
+        let chunk_len = rec_chunk.len();
+        for (j, rec) in rec_chunk.into_iter().enumerate() {
+          let total = usize::from_str(rec.last().unwrap()).unwrap();
+          let layers: Vec<Vec<u8>> = header[..header.len() - 1]
+            .iter()
+            .zip(rec[..rec.len() - 1].iter())
+            .map(|(name, value)| format!("{}|{}", name, value).as_bytes().to_vec())
+            .collect();
 
-        task_msgs.extend(
-          generate_messages(&layers, &cli_args, total)
-        );
+          task_msgs.extend(generate_messages(&layers, &cli_args, total));
 
-        if j % 100 == 0 {
-          println!("Chunk {}/{}: generated {}/{} unique msgs in chunk",
-            i, rec_chunks_len, j, chunk_len);
+          if j % 100 == 0 {
+            println!(
+              "Chunk {}/{}: generated {}/{} unique msgs in chunk",
+              i, rec_chunks_len, j, chunk_len
+            );
+          }
         }
-      }
-      let mut file_guard = file.lock().await;
-      file_guard.write_all(
-        task_msgs.join("\n").as_bytes()
-      ).await.unwrap();
-      file_guard.write_all(b"\n").await.unwrap();
+        let mut file_guard = file.lock().await;
+        file_guard
+          .write_all(task_msgs.join("\n").as_bytes())
+          .await
+          .unwrap();
+        file_guard.write_all(b"\n").await.unwrap();
+      })
     })
-  }).collect();
+    .collect();
 
   try_join_all(gen_tasks).await.unwrap();
 }
 
 async fn send_random_messages(cli_args: &CliArgs) {
   println!("Generating random messages...");
-  let messages = gen_random_msgs(&cli_args).await;
+  let messages = gen_random_msgs(cli_args).await;
 
   println!("Splitting messages...");
 
   let message_count = messages.len();
 
-  let message_chunks: Vec<Vec<String>> = messages
+  let message_chunks = messages
     .chunks(message_count / cli_args.task_count)
-    .map(|v| v.to_vec())
-    .collect();
+    .map(|v| v.to_vec());
 
   println!("Sending requests...");
 
@@ -205,7 +223,7 @@ async fn send_messages_from_file(cli_args: &CliArgs, messages_file: &str) {
     .collect();
 
   let task_results = try_join_all(tasks).await.unwrap();
-  let message_count = task_results.iter().fold(0, |acc, r| acc + r);
+  let message_count = task_results.iter().sum();
 
   calc_and_output_time(message_count, start_time);
 }
@@ -236,5 +254,4 @@ async fn main() {
     println!("Generating random messages...");
     send_random_messages(&cli_args).await;
   }
-
 }
