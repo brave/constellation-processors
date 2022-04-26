@@ -83,6 +83,7 @@ impl RecordStream {
           .set("group.id", "star-agg")
           .set("enable.auto.commit", "false")
           .set("session.timeout.ms", "21000")
+          .set("max.poll.interval.ms", "14400000")
           .set("auto.offset.reset", "smallest")
           .create_with_context(context)
           .unwrap(),
