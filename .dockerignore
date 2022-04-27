@@ -2,3 +2,5 @@ target
 misc
 .git
 .github
+nested-sta-rs/.git
+nested-sta-rs/target
