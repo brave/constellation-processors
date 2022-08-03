@@ -2,7 +2,7 @@ use super::group::GroupedMessages;
 use super::recovered::RecoveredMessages;
 use super::report::report_measurements;
 use super::AggregatorError;
-use crate::epoch::{get_current_epoch, is_epoch_expired};
+use crate::epoch::is_epoch_expired;
 use crate::models::{DBPool, PendingMessage, RecoveredMessage};
 use crate::record_stream::RecordStream;
 use crate::star::{parse_message_bincode, recover_key, recover_msgs, MsgRecoveryInfo};
@@ -11,9 +11,9 @@ use tokio::task::JoinHandle;
 
 pub async fn process_expired_epochs(
   db_pool: Arc<DBPool>,
+  current_epoch: u8,
   out_stream: Option<&RecordStream>,
 ) -> Result<(), AggregatorError> {
-  let current_epoch = get_current_epoch();
   let epochs = RecoveredMessage::list_distinct_epochs(db_pool.clone()).await?;
   for epoch in epochs {
     if !is_epoch_expired(epoch as u8, current_epoch) {

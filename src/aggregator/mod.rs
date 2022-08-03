@@ -4,6 +4,7 @@ mod processing;
 mod recovered;
 mod report;
 
+use crate::epoch::get_current_epoch;
 use crate::models::{create_db_pool, PgStoreError};
 use crate::record_stream::{RecordStream, RecordStreamError};
 use crate::star::AppSTARError;
@@ -37,6 +38,9 @@ pub async fn start_aggregation(
   iterations: usize,
   output_measurements_to_stdout: bool,
 ) -> Result<(), AggregatorError> {
+  let current_epoch = get_current_epoch().await;
+  info!("Current epoch is {}", current_epoch);
+
   let k_threshold =
     usize::from_str(&env::var(K_THRESHOLD_ENV_KEY).unwrap_or(K_THRESHOLD_DEFAULT.to_string()))
       .unwrap_or_else(|_| panic!("{} must be a positive integer", K_THRESHOLD_ENV_KEY));
@@ -80,7 +84,12 @@ pub async fn start_aggregation(
     // Check for expired epochs. Send off partial measurements.
     // Delete pending/recovered messages from DB.
     info!("Checking/processing expired epochs");
-    process_expired_epochs(db_pool.clone(), out_stream.as_ref().map(|v| v.as_ref())).await?;
+    process_expired_epochs(
+      db_pool.clone(),
+      current_epoch,
+      out_stream.as_ref().map(|v| v.as_ref()),
+    )
+    .await?;
 
     // Commit consumption to Kafka cluster, to mark messages as "already read"
     info!("Committing Kafka consumption");

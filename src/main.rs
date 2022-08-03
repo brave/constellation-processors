@@ -12,7 +12,6 @@ use aggregator::start_aggregation;
 use clap::{ArgGroup, Parser};
 use dotenv::dotenv;
 use env_logger::Env;
-use epoch::get_current_epoch;
 use futures::future::try_join_all;
 use lakesink::start_lakesink;
 use server::start_server;
@@ -75,8 +74,6 @@ async fn main() {
 
   dotenv().ok();
   env_logger::Builder::from_env(Env::default().default_filter_or("info")).init();
-
-  info!("Current epoch is {}", get_current_epoch());
 
   let mut tasks = Vec::new();
 
