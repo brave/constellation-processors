@@ -1,7 +1,7 @@
 use clap::Parser;
 use futures::future::try_join_all;
 use nested_sta_rs::api::*;
-use nested_sta_rs::randomness::testing::LocalFetcher as RandomnessFetcher;
+use nested_sta_rs::randomness::testing::{LocalFetcher, LocalFetcherResponse};
 use rand::{thread_rng, Rng};
 use std::path::PathBuf;
 use std::str::FromStr;
@@ -43,14 +43,30 @@ struct CliArgs {
 }
 
 fn generate_messages(layers: &[Vec<u8>], cli_args: &CliArgs, count: usize) -> Vec<String> {
-  let rnd_fetcher = RandomnessFetcher::new();
+  let rnd_fetcher = LocalFetcher::new();
   let example_aux = vec![];
   (0..count)
     .map(|_| {
-      let rsf = client::format_measurement(layers, cli_args.epoch).unwrap();
-      let mgf = client::sample_randomness(&rnd_fetcher, rsf, &None).unwrap();
+      let rrs = client::prepare_measurement(layers, cli_args.epoch).unwrap();
+      let req = client::construct_randomness_request(&rrs);
 
-      client::construct_message(mgf, &example_aux, cli_args.threshold).unwrap()
+      let req_slice_vec: Vec<&[u8]> = req.iter().map(|v| v.as_slice()).collect();
+      let LocalFetcherResponse {
+        serialized_points, ..
+      } = rnd_fetcher.eval(&req_slice_vec, cli_args.epoch).unwrap();
+
+      let points_slice_vec: Vec<&[u8]> = serialized_points.iter().map(|v| v.as_slice()).collect();
+      base64::encode(
+        client::construct_message(
+          &points_slice_vec,
+          None,
+          &rrs,
+          &None,
+          &example_aux,
+          cli_args.threshold,
+        )
+        .unwrap(),
+      )
     })
     .collect()
 }
