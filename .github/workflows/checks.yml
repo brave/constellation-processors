@@ -39,18 +39,11 @@ jobs:
           command: fmt
           args: --check
 
-      # Uncomment once nested-sta-rs goes public
-      # - name: Build
-      #   uses: actions-rs/cargo@v1
-      #   with:
-      #     command: build
-      #     args: --release --all-targets
-
-      # - name: Clippy
-      #   uses: actions-rs/clippy-check@v1
-      #   with:
-      #     token: ${{ secrets.GITHUB_TOKEN }}
-      #     args: --release --all-targets -- -D warnings -A clippy::too_many_arguments
+      - name: Build
+        uses: actions-rs/cargo@v1
+        with:
+          command: build
+          args: --release --all-targets
 
       - name: Test Client Format
         uses: actions-rs/cargo@v1
@@ -58,15 +51,8 @@ jobs:
           command: fmt
           args: --check --manifest-path misc/test-client/Cargo.toml
 
-      # Uncomment once nested-sta-rs goes public
-      # - name: Test Client Build
-      #   uses: actions-rs/cargo@v1
-      #   with:
-      #     command: build
-      #     args: --release --all-targets --manifest-path misc/test-client/Cargo.toml
-
-      # - name: Test Client Clippy
-      #   uses: actions-rs/clippy-check@v1
-      #   with:
-      #     token: ${{ secrets.GITHUB_TOKEN }}
-      #     args: --release --all-targets -- -D warnings -A clippy::too_many_arguments --manifest-path misc/test-client/Cargo.toml
+      - name: Test Client Build
+        uses: actions-rs/cargo@v1
+        with:
+          command: build
+          args: --release --all-targets --manifest-path misc/test-client/Cargo.toml
