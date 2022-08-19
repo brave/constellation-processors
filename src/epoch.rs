@@ -8,6 +8,7 @@ const EPOCH_LIFETIME_WEEKS: usize = 4;
 
 const RANDOMNESS_HOST_ENV_KEY: &str = "RANDOMNESS_HOST";
 const DISABLE_RANDOMNESS_TLS_VALIDATION_ENV_KEY: &str = "DISABLE_RANDOMNESS_TLS_VALIDATION";
+const TEST_EPOCH_ENV_KEY: &str = "TEST_EPOCH";
 
 #[derive(Deserialize)]
 struct RandomnessInfoResponse {
@@ -16,6 +17,9 @@ struct RandomnessInfoResponse {
 }
 
 pub async fn get_current_epoch() -> u8 {
+  if let Ok(epoch_val) = env::var(TEST_EPOCH_ENV_KEY) {
+    return epoch_val.parse::<u8>().unwrap();
+  }
   let mut client_builder = reqwest::ClientBuilder::new();
   if env::var(DISABLE_RANDOMNESS_TLS_VALIDATION_ENV_KEY).unwrap_or("".to_string()) == "true" {
     client_builder = client_builder.danger_accept_invalid_certs(true);

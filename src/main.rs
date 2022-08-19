@@ -3,19 +3,25 @@ mod epoch;
 mod lake;
 mod lakesink;
 mod models;
+mod prometheus;
 mod record_stream;
 mod schema;
 mod server;
 mod star;
 
+use actix_web::dev::Server;
 use aggregator::start_aggregation;
 use clap::{ArgGroup, Parser};
 use dotenv::dotenv;
 use env_logger::Env;
 use futures::future::try_join_all;
 use lakesink::start_lakesink;
+use prometheus::{create_metric_server, DataLakeMetrics};
+use prometheus_client::registry::Registry;
 use server::start_server;
 use std::process;
+use std::sync::Arc;
+use tokio::task::JoinHandle;
 use tokio_util::sync::CancellationToken;
 
 #[macro_use]
@@ -75,15 +81,24 @@ async fn main() {
   dotenv().ok();
   env_logger::Builder::from_env(Env::default().default_filter_or("info")).init();
 
-  let mut tasks = Vec::new();
+  let mut dl_tasks = Vec::new();
+  let mut dl_metrics_server: Option<JoinHandle<_>> = None;
 
   let mut lakesink_cancel_tokens = Vec::new();
   if cli_args.lake_sink {
+    let mut registry = <Registry>::default();
+    let dl_metrics = Arc::new(DataLakeMetrics::default());
+    dl_metrics.register_metrics(&mut registry);
+
+    dl_metrics_server = Some(tokio::spawn(create_metric_server(registry).unwrap()));
+
     for _ in 0..cli_args.lakesink_consumer_count {
+      let dl_metrics = dl_metrics.clone();
+
       let cancel_token = CancellationToken::new();
       let cloned_token = cancel_token.clone();
-      tasks.push(tokio::spawn(async move {
-        let res = start_lakesink(cloned_token.clone()).await;
+      dl_tasks.push(tokio::spawn(async move {
+        let res = start_lakesink(dl_metrics, cloned_token.clone()).await;
         if let Err(e) = res {
           error!("Lake sink task failed: {:?}", e);
           process::exit(1);
@@ -102,14 +117,19 @@ async fn main() {
     )
     .await
     .unwrap();
-    lakesink_cancel_tokens.iter().for_each(|t| t.cancel());
-    try_join_all(tasks).await.unwrap();
+    if cli_args.lake_sink {
+      dl_metrics_server.unwrap().await.unwrap();
+      lakesink_cancel_tokens.iter().for_each(|t| t.cancel());
+      try_join_all(dl_tasks).await.unwrap();
+    }
     return;
   }
 
   if cli_args.server {
     start_server(cli_args.server_worker_count).await.unwrap();
-  } else if !tasks.is_empty() {
-    try_join_all(tasks).await.unwrap();
+  } else if cli_args.lake_sink {
+    dl_metrics_server.unwrap().await.unwrap();
+    lakesink_cancel_tokens.iter().for_each(|t| t.cancel());
+    try_join_all(dl_tasks).await.unwrap();
   }
 }

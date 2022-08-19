@@ -1,6 +1,8 @@
+use crate::prometheus::{create_metric_server, WebMetrics};
 use crate::record_stream::RecordStream;
 use crate::star::{parse_message, AppSTARError};
 use actix_web::{
+  dev::Service,
   error::ResponseError,
   http::{header::ContentType, StatusCode},
   post,
@@ -8,7 +10,11 @@ use actix_web::{
   App, HttpResponse, HttpServer, Responder,
 };
 use derive_more::{Display, Error, From};
+use futures::{future::try_join, FutureExt, TryFutureExt};
+use prometheus_client::registry::Registry;
 use std::str::{from_utf8, Utf8Error};
+use std::sync::Arc;
+use std::time::Instant;
 
 #[derive(From, Error, Display, Debug)]
 pub enum WebError {
@@ -22,6 +28,7 @@ pub enum WebError {
 
 pub struct ServerState {
   pub rec_stream: RecordStream,
+  pub web_metrics: Arc<WebMetrics>,
 }
 
 impl ResponseError for WebError {
@@ -57,11 +64,43 @@ async fn main_handler(
 pub async fn start_server(worker_count: usize) -> std::io::Result<()> {
   let state = Data::new(ServerState {
     rec_stream: RecordStream::new(true, false, false),
+    web_metrics: Arc::new(WebMetrics::new()),
   });
+
+  let mut registry = <Registry>::default();
+  state.web_metrics.register_metrics(&mut registry);
+  let metric_server = create_metric_server(registry)?;
+
   info!("Starting server...");
-  HttpServer::new(move || App::new().app_data(state.clone()).service(main_handler))
-    .workers(worker_count)
-    .bind(("0.0.0.0", 8080))?
-    .run()
-    .await
+  let main_server = HttpServer::new(move || {
+    App::new()
+      .app_data(state.clone())
+      .wrap_fn(|req, srv| {
+        let web_metrics = req
+          .app_data::<Data<ServerState>>()
+          .unwrap()
+          .web_metrics
+          .clone();
+        let web_metrics_err = web_metrics.clone();
+
+        web_metrics.request_start();
+        let start_time = Instant::now();
+        srv
+          .call(req)
+          .map(move |res| {
+            web_metrics.request_end(Some(start_time.elapsed()));
+            res
+          })
+          .map_err(move |err| {
+            web_metrics_err.request_end(None);
+            err
+          })
+      })
+      .service(main_handler)
+  })
+  .workers(worker_count)
+  .bind(("0.0.0.0", 8080))?
+  .run();
+
+  try_join(metric_server, main_server).await.map(|_| ())
 }
