@@ -19,6 +19,7 @@ use lakesink::start_lakesink;
 use prometheus::{create_metric_server, DataLakeMetrics};
 use prometheus_client::registry::Registry;
 use server::start_server;
+use std::env;
 use std::process;
 use std::sync::Arc;
 use tokio::task::JoinHandle;
@@ -29,6 +30,8 @@ extern crate log;
 
 #[macro_use]
 extern crate diesel;
+
+const SENTRY_DSN_ENV_KEY: &str = "SENTRY_DSN";
 
 #[derive(Parser, Debug, Clone)]
 #[clap(version, about)]
@@ -80,6 +83,10 @@ async fn main() {
 
   dotenv().ok();
   env_logger::Builder::from_env(Env::default().default_filter_or("info")).init();
+
+  let _sentry_guard = env::var(SENTRY_DSN_ENV_KEY)
+    .ok()
+    .map(|dsn| sentry::init(dsn));
 
   let mut dl_tasks = Vec::new();
   let mut dl_metrics_server: Option<JoinHandle<_>> = None;
