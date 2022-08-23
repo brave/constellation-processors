@@ -1,5 +1,5 @@
 [package]
-name = "nested-star-aggregator"
+name = "nested-star-processors"
 version = "0.1.0"
 edition = "2021"
 

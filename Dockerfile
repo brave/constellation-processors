@@ -9,4 +9,4 @@ RUN cargo install --path .
 RUN cargo clean
 RUN rm -rf /usr/local/cargo/registry
 
-CMD ["nested-star-aggregator"]
+CMD ["nested-star-processors"]

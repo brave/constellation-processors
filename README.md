@@ -1,6 +1,6 @@
-# Nested STAR Aggregator
+# Nested STAR Processors
 
-Server-side collector and aggregator for recovering data protected by the nested [STAR](https://arxiv.org/abs/2109.10074) protocol.
+Server-side collector, aggregator and data lake sink for recovering data protected by the nested [STAR](https://arxiv.org/abs/2109.10074) protocol.
 
 To be used in P3A Phase 2.
 
@@ -22,7 +22,7 @@ Run `cargo run -- -h` to see options:
 
 ```
 USAGE:
-    nested-star-aggregator [OPTIONS] <--aggregator|--lake-sink|--server>
+    nested-star-processors [OPTIONS] <--aggregator|--lake-sink|--server>
 
 OPTIONS:
     -a, --aggregator
