@@ -9,7 +9,6 @@ mod schema;
 mod server;
 mod star;
 
-use actix_web::dev::Server;
 use aggregator::start_aggregation;
 use clap::{ArgGroup, Parser};
 use dotenv::dotenv;
@@ -125,7 +124,7 @@ async fn main() {
     .await
     .unwrap();
     if cli_args.lake_sink {
-      dl_metrics_server.unwrap().await.unwrap();
+      dl_metrics_server.unwrap().await.unwrap().unwrap();
       lakesink_cancel_tokens.iter().for_each(|t| t.cancel());
       try_join_all(dl_tasks).await.unwrap();
     }
@@ -135,7 +134,7 @@ async fn main() {
   if cli_args.server {
     start_server(cli_args.server_worker_count).await.unwrap();
   } else if cli_args.lake_sink {
-    dl_metrics_server.unwrap().await.unwrap();
+    dl_metrics_server.unwrap().await.unwrap().unwrap();
     lakesink_cancel_tokens.iter().for_each(|t| t.cancel());
     try_join_all(dl_tasks).await.unwrap();
   }

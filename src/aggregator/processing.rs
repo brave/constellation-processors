@@ -5,7 +5,10 @@ use super::AggregatorError;
 use crate::epoch::is_epoch_expired;
 use crate::models::{DBPool, PendingMessage, RecoveredMessage};
 use crate::record_stream::RecordStream;
-use crate::star::{parse_message_bincode, recover_key, recover_msgs, MsgRecoveryInfo};
+use crate::star::{
+  parse_message_bincode, recover_key, recover_msgs, AppSTARError, MsgRecoveryInfo,
+};
+use nested_sta_rs::errors::NestedSTARError;
 use std::sync::Arc;
 use tokio::task::JoinHandle;
 
@@ -50,6 +53,8 @@ fn process_one_layer(
       {
         continue;
       }
+      let new_msg_count = chunk.new_msgs.len();
+
       // concat new messages from kafka, and pending messages from PG into one vec
       let mut msgs = Vec::new();
       msgs.append(&mut chunk.new_msgs);
@@ -62,7 +67,21 @@ fn process_one_layer(
       let key = if let Some(rec_msg) = existing_rec_msg.as_ref() {
         rec_msg.key.clone()
       } else {
-        recover_key(&msgs, *epoch, k_threshold)?
+        match recover_key(&msgs, *epoch, k_threshold) {
+          Err(e) => {
+            match e {
+              AppSTARError::Recovery(NestedSTARError::ShareRecoveryFailedError) => {
+                // Store new messages until we receive more shares in the future
+                for msg in msgs.drain(..new_msg_count) {
+                  chunk.new_msgs.push(msg);
+                }
+                continue;
+              }
+              _ => return Err(AggregatorError::AppSTAR(e)),
+            };
+          }
+          Ok(key) => key,
+        }
       };
 
       let msgs_len = msgs.len() as i64;

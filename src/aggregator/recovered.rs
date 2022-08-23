@@ -39,9 +39,12 @@ impl RecoveredMessages {
     self
       .parent_tags_map
       .get(&epoch)
-      .unwrap()
-      .get(&parent_msg_tag.unwrap_or_default())
-      .map(|s| s.iter().cloned().collect())
+      .map(|epoch_map| {
+        epoch_map
+          .get(&parent_msg_tag.unwrap_or_default())
+          .map(|s| s.iter().cloned().collect())
+          .unwrap_or_default()
+      })
       .unwrap_or_default()
   }
 

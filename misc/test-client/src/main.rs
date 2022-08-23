@@ -128,7 +128,7 @@ async fn gen_msgs_from_data_and_save(csv_path: &str, cli_args: &CliArgs) {
   ));
 
   let rec_chunks: Vec<Vec<Vec<String>>> = records
-    .chunks(records.len() / DATA_GEN_TASKS)
+    .chunks(std::cmp::max(records.len() / DATA_GEN_TASKS, 1))
     .map(|v| v.to_vec())
     .collect();
   let rec_chunks_len = rec_chunks.len();
