@@ -98,7 +98,7 @@ async fn metrics_handler(state: web::Data<Mutex<Registry>>) -> io::Result<HttpRe
   )
 }
 
-pub fn create_metric_server(registry: Registry) -> io::Result<Server> {
+pub fn create_metric_server(registry: Registry, port: u16) -> io::Result<Server> {
   let state = web::Data::new(Mutex::new(registry));
   Ok(
     HttpServer::new(move || {
@@ -106,7 +106,7 @@ pub fn create_metric_server(registry: Registry) -> io::Result<Server> {
         .app_data(state.clone())
         .service(web::resource("/metrics").route(web::get().to(metrics_handler)))
     })
-    .bind(("0.0.0.0", 9090))?
+    .bind(("0.0.0.0", port))?
     .run(),
   )
 }

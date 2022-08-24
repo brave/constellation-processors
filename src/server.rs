@@ -69,7 +69,7 @@ pub async fn start_server(worker_count: usize) -> std::io::Result<()> {
 
   let mut registry = <Registry>::default();
   state.web_metrics.register_metrics(&mut registry);
-  let metric_server = create_metric_server(registry)?;
+  let metric_server = create_metric_server(registry, 9090)?;
 
   info!("Starting server...");
   let main_server = HttpServer::new(move || {

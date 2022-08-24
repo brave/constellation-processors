@@ -1,9 +1,10 @@
-use super::{BatchInsert, DBPool};
+use super::{BatchInsert, DBConnection};
 use crate::models::PgStoreError;
 use crate::schema::recovered_msgs;
 use async_trait::async_trait;
 use diesel::{ExpressionMethods, QueryDsl, RunQueryDsl};
-use std::sync::Arc;
+use std::ops::Deref;
+use std::sync::{Arc, Mutex};
 use tokio::task;
 
 #[derive(Queryable, Clone)]
@@ -49,35 +50,36 @@ impl From<RecoveredMessage> for NewRecoveredMessage {
 
 impl RecoveredMessage {
   pub async fn list(
-    db_pool: Arc<DBPool>,
+    conn: Arc<Mutex<DBConnection>>,
     filter_epoch_tag: i16,
     filter_msg_tags: Vec<Vec<u8>>,
   ) -> Result<Vec<RecoveredMessage>, PgStoreError> {
     task::spawn_blocking(move || {
       use crate::schema::recovered_msgs::dsl::*;
-      let conn = db_pool.get()?;
+
+      let conn = conn.lock().unwrap();
       Ok(
         recovered_msgs
           .filter(epoch_tag.eq(filter_epoch_tag))
           .filter(msg_tag.eq_any(filter_msg_tags))
-          .load(&conn)?,
+          .load(conn.deref())?,
       )
     })
     .await?
   }
 
   pub async fn update_count(
-    db_pool: Arc<DBPool>,
+    conn: Arc<Mutex<DBConnection>>,
     curr_id: i64,
     new_count: i64,
   ) -> Result<(), PgStoreError> {
     task::spawn_blocking(move || {
       use crate::schema::recovered_msgs::dsl::*;
 
-      let conn = db_pool.get()?;
+      let conn = conn.lock().unwrap();
       diesel::update(recovered_msgs.filter(id.eq(curr_id)))
         .set(count.eq(new_count))
-        .execute(&conn)?;
+        .execute(conn.deref())?;
 
       Ok(())
     })
@@ -85,43 +87,50 @@ impl RecoveredMessage {
   }
 
   pub async fn list_with_nonzero_count(
-    db_pool: Arc<DBPool>,
+    conn: Arc<Mutex<DBConnection>>,
     filter_epoch_tag: i16,
   ) -> Result<Vec<Self>, PgStoreError> {
     task::spawn_blocking(move || {
       use crate::schema::recovered_msgs::dsl::*;
 
-      let conn = db_pool.get()?;
+      let conn = conn.lock().unwrap();
       Ok(
         recovered_msgs
           .filter(epoch_tag.eq(filter_epoch_tag))
           .filter(count.gt(0))
-          .load(&conn)?,
+          .load(conn.deref())?,
       )
     })
     .await?
   }
 
-  pub async fn list_distinct_epochs(db_pool: Arc<DBPool>) -> Result<Vec<i16>, PgStoreError> {
+  pub async fn list_distinct_epochs(
+    conn: Arc<Mutex<DBConnection>>,
+  ) -> Result<Vec<i16>, PgStoreError> {
     task::spawn_blocking(move || {
       use crate::schema::recovered_msgs::dsl::*;
 
-      let conn = db_pool.get()?;
+      let conn = conn.lock().unwrap();
       Ok(
         recovered_msgs
           .select(epoch_tag)
           .distinct()
-          .load::<i16>(&conn)?,
+          .load::<i16>(conn.deref())?,
       )
     })
     .await?
   }
 
-  pub async fn delete_epoch(pool: Arc<DBPool>, filter_epoch_tag: i16) -> Result<(), PgStoreError> {
+  pub async fn delete_epoch(
+    conn: Arc<Mutex<DBConnection>>,
+    filter_epoch_tag: i16,
+  ) -> Result<(), PgStoreError> {
     task::spawn_blocking(move || {
       use crate::schema::recovered_msgs::dsl::*;
-      let conn = pool.get()?;
-      diesel::delete(recovered_msgs.filter(epoch_tag.eq(filter_epoch_tag))).execute(&conn)?;
+
+      let conn = conn.lock().unwrap();
+      diesel::delete(recovered_msgs.filter(epoch_tag.eq(filter_epoch_tag)))
+        .execute(conn.deref())?;
       Ok(())
     })
     .await?
@@ -130,12 +139,12 @@ impl RecoveredMessage {
 
 #[async_trait]
 impl BatchInsert<NewRecoveredMessage> for Vec<NewRecoveredMessage> {
-  async fn insert_batch(self, db_pool: Arc<DBPool>) -> Result<(), PgStoreError> {
+  async fn insert_batch(self, conn: Arc<Mutex<DBConnection>>) -> Result<(), PgStoreError> {
     task::spawn_blocking(move || {
-      let conn = db_pool.get()?;
+      let conn = conn.lock().unwrap();
       diesel::insert_into(recovered_msgs::table)
         .values(self)
-        .execute(&conn)?;
+        .execute(conn.deref())?;
       Ok(())
     })
     .await?

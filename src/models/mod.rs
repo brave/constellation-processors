@@ -8,16 +8,17 @@ pub use recovered_msg::*;
 
 use async_trait::async_trait;
 use diesel::pg::PgConnection;
-use diesel::r2d2::{ConnectionManager, Pool};
+use diesel::r2d2::{ConnectionManager, Pool, PooledConnection};
 use std::env;
 use std::str::FromStr;
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 
 const DATABASE_URL_ENV_KEY: &str = "DATABASE_URL";
 const MAX_CONN_ENV_KEY: &str = "DATABASE_MAX_CONN";
 const MAX_CONN_DEFAULT: &str = "100";
 
 pub type DBPool = Pool<ConnectionManager<PgConnection>>;
+pub type DBConnection = PooledConnection<ConnectionManager<PgConnection>>;
 
 pub fn create_db_pool() -> DBPool {
   let db_url = env::var(DATABASE_URL_ENV_KEY)
@@ -35,5 +36,5 @@ pub fn create_db_pool() -> DBPool {
 
 #[async_trait]
 pub trait BatchInsert<T> {
-  async fn insert_batch(self, pool: Arc<DBPool>) -> Result<(), PgStoreError>;
+  async fn insert_batch(self, conn: Arc<Mutex<DBConnection>>) -> Result<(), PgStoreError>;
 }

@@ -1,7 +1,7 @@
 use super::AggregatorError;
-use crate::models::{BatchInsert, DBPool, NewRecoveredMessage, RecoveredMessage};
+use crate::models::{BatchInsert, DBConnection, NewRecoveredMessage, RecoveredMessage};
 use std::collections::{HashMap, HashSet};
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 
 type EpochRecMsgsMap = HashMap<Vec<u8>, RecoveredMessage>;
 type RecMsgsMap = HashMap<u8, EpochRecMsgsMap>;
@@ -50,11 +50,11 @@ impl RecoveredMessages {
 
   pub async fn fetch_recovered(
     &mut self,
-    db_pool: Arc<DBPool>,
+    conn: Arc<Mutex<DBConnection>>,
     epoch: u8,
     msg_tags: Vec<Vec<u8>>,
   ) -> Result<(), AggregatorError> {
-    let recovered_msgs = RecoveredMessage::list(db_pool.clone(), epoch as i16, msg_tags).await?;
+    let recovered_msgs = RecoveredMessage::list(conn, epoch as i16, msg_tags).await?;
     for rec_msg in recovered_msgs {
       self.add(rec_msg);
     }
@@ -63,30 +63,30 @@ impl RecoveredMessages {
 
   pub async fn fetch_all_recovered_with_nonzero_count(
     &mut self,
-    db_pool: Arc<DBPool>,
+    conn: Arc<Mutex<DBConnection>>,
     epoch: u8,
   ) -> Result<(), AggregatorError> {
-    let recovered_msgs = RecoveredMessage::list_with_nonzero_count(db_pool, epoch as i16).await?;
+    let recovered_msgs = RecoveredMessage::list_with_nonzero_count(conn, epoch as i16).await?;
     for rec_msg in recovered_msgs {
       self.add(rec_msg);
     }
     Ok(())
   }
 
-  pub async fn save(self, db_pool: Arc<DBPool>) -> Result<(), AggregatorError> {
+  pub async fn save(self, conn: Arc<Mutex<DBConnection>>) -> Result<(), AggregatorError> {
     let mut new_msgs = Vec::new();
     for (_, epoch_map) in self.map {
       for (_, rec_msg) in epoch_map {
         if rec_msg.id == 0 {
           new_msgs.push(NewRecoveredMessage::from(rec_msg));
         } else {
-          RecoveredMessage::update_count(db_pool.clone(), rec_msg.id, rec_msg.count).await?;
+          RecoveredMessage::update_count(conn.clone(), rec_msg.id, rec_msg.count).await?;
         }
       }
     }
     for new_msgs in new_msgs.chunks(INSERT_BATCH_SIZE) {
       let new_msgs = new_msgs.to_vec();
-      new_msgs.insert_batch(db_pool.clone()).await?;
+      new_msgs.insert_batch(conn.clone()).await?;
     }
     Ok(())
   }

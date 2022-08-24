@@ -8,12 +8,12 @@ use tokio::time::sleep;
 const RECV_TIMEOUT_MS: u64 = 2500;
 
 pub async fn consume_and_group(
+  rec_stream: &RecordStream,
   msg_collect_count: usize,
-) -> Result<(GroupedMessages, RecordStream, usize), AggregatorError> {
+) -> Result<(GroupedMessages, usize), AggregatorError> {
   let mut count = 0;
   let mut grouped_msgs = GroupedMessages::default();
 
-  let rec_stream = RecordStream::new(false, true, false);
   loop {
     tokio::select! {
       msg_res = rec_stream.consume() => {
@@ -32,5 +32,5 @@ pub async fn consume_and_group(
     }
   }
 
-  Ok((grouped_msgs, rec_stream, count))
+  Ok((grouped_msgs, count))
 }

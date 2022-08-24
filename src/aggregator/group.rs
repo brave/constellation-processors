@@ -1,12 +1,14 @@
 use super::recovered::RecoveredMessages;
 use super::AggregatorError;
-use crate::models::{BatchInsert, DBPool, NewPendingMessage, PendingMessage};
+use crate::models::{
+  BatchInsert, DBConnection, DBPool, NewPendingMessage, PendingMessage, PgStoreError,
+};
 use crate::star::serialize_message_bincode;
 use futures::future::try_join_all;
 use nested_sta_rs::api::NestedMessage;
 use std::cmp::{max, min};
 use std::collections::HashMap;
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 use tokio::task::JoinHandle;
 
 #[derive(Default, Clone)]
@@ -45,13 +47,13 @@ impl GroupedMessages {
 
   pub async fn fetch_recovered(
     &mut self,
-    db_pool: Arc<DBPool>,
+    conn: Arc<Mutex<DBConnection>>,
     rec_msgs: &mut RecoveredMessages,
   ) -> Result<(), AggregatorError> {
     for (epoch, epoch_chunks) in self.msg_chunks.iter() {
       let msg_tags: Vec<Vec<u8>> = epoch_chunks.keys().cloned().collect();
       rec_msgs
-        .fetch_recovered(db_pool.clone(), *epoch, msg_tags)
+        .fetch_recovered(conn.clone(), *epoch, msg_tags)
         .await?;
     }
     Ok(())
@@ -69,12 +71,14 @@ impl GroupedMessages {
             let tags = tags.to_vec();
             let epoch = *epoch as i16;
             tokio::spawn(async move {
+              let conn = Arc::new(Mutex::new(
+                db_pool.get().map_err(|e| PgStoreError::from(e))?,
+              ));
               let mut pending_msgs = PendingMessageMap::new();
+
               for tag in tags {
-                pending_msgs.insert(
-                  tag.clone(),
-                  PendingMessage::list(db_pool.clone(), epoch, tag).await?,
-                );
+                let msgs = PendingMessage::list(conn.clone(), epoch, tag.clone()).await?;
+                pending_msgs.insert(tag, msgs);
               }
               Ok(pending_msgs)
             })
@@ -92,7 +96,10 @@ impl GroupedMessages {
     Ok(())
   }
 
-  pub async fn store_new_pending_msgs(self, db_pool: Arc<DBPool>) -> Result<(), AggregatorError> {
+  pub async fn store_new_pending_msgs(
+    self,
+    conn: Arc<Mutex<DBConnection>>,
+  ) -> Result<(), AggregatorError> {
     for (epoch, mut epoch_chunks) in self.msg_chunks {
       for chunk in epoch_chunks.values_mut() {
         chunk.pending_msgs.clear();
@@ -113,7 +120,7 @@ impl GroupedMessages {
       if !new_pending_msgs.is_empty() {
         for new_msgs in new_pending_msgs.chunks(INSERT_BATCH_SIZE) {
           let new_msgs = new_msgs.to_vec();
-          new_msgs.insert_batch(db_pool.clone()).await?;
+          new_msgs.insert_batch(conn.clone()).await?;
         }
       }
     }

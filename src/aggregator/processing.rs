@@ -3,21 +3,21 @@ use super::recovered::RecoveredMessages;
 use super::report::report_measurements;
 use super::AggregatorError;
 use crate::epoch::is_epoch_expired;
-use crate::models::{DBPool, PendingMessage, RecoveredMessage};
+use crate::models::{DBConnection, DBPool, PendingMessage, RecoveredMessage};
 use crate::record_stream::RecordStream;
 use crate::star::{
   parse_message_bincode, recover_key, recover_msgs, AppSTARError, MsgRecoveryInfo,
 };
 use nested_sta_rs::errors::NestedSTARError;
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 use tokio::task::JoinHandle;
 
 pub async fn process_expired_epochs(
-  db_pool: Arc<DBPool>,
+  conn: Arc<Mutex<DBConnection>>,
   current_epoch: u8,
   out_stream: Option<&RecordStream>,
 ) -> Result<(), AggregatorError> {
-  let epochs = RecoveredMessage::list_distinct_epochs(db_pool.clone()).await?;
+  let epochs = RecoveredMessage::list_distinct_epochs(conn.clone()).await?;
   for epoch in epochs {
     if !is_epoch_expired(epoch as u8, current_epoch) {
       continue;
@@ -25,12 +25,12 @@ pub async fn process_expired_epochs(
     info!("Detected expired epoch '{}', processing...", epoch);
     let mut rec_msgs = RecoveredMessages::default();
     rec_msgs
-      .fetch_all_recovered_with_nonzero_count(db_pool.clone(), epoch as u8)
+      .fetch_all_recovered_with_nonzero_count(conn.clone(), epoch as u8)
       .await?;
 
     report_measurements(&mut rec_msgs, epoch as u8, true, out_stream).await?;
-    RecoveredMessage::delete_epoch(db_pool.clone(), epoch).await?;
-    PendingMessage::delete_epoch(db_pool.clone(), epoch).await?;
+    RecoveredMessage::delete_epoch(conn.clone(), epoch).await?;
+    PendingMessage::delete_epoch(conn.clone(), epoch).await?;
   }
   Ok(())
 }
@@ -125,6 +125,7 @@ fn process_one_layer(
 
 pub fn start_subtask(
   id: usize,
+  conn: Arc<Mutex<DBConnection>>,
   db_pool: Arc<DBPool>,
   out_stream: Option<Arc<RecordStream>>,
   mut grouped_msgs: GroupedMessages,
@@ -144,7 +145,7 @@ pub fn start_subtask(
       // Fetch recovered message info (which includes key) for collected tags, if available
       debug!("Task {}: Fetching recovered messages", id);
       grouped_msgs
-        .fetch_recovered(db_pool.clone(), &mut rec_msgs)
+        .fetch_recovered(conn.clone(), &mut rec_msgs)
         .await
         .unwrap();
 
@@ -160,7 +161,7 @@ pub fn start_subtask(
 
       debug!("Task {}: Storing new pending messages", id);
       grouped_msgs
-        .store_new_pending_msgs(db_pool.clone())
+        .store_new_pending_msgs(conn.clone())
         .await
         .unwrap();
 
@@ -174,7 +175,7 @@ pub fn start_subtask(
 
     info!("Task {}: Deleting old pending messages", id);
     for (epoch, msg_tag) in pending_tags_to_remove {
-      PendingMessage::delete_tag(db_pool.clone(), epoch as i16, msg_tag)
+      PendingMessage::delete_tag(conn.clone(), epoch as i16, msg_tag)
         .await
         .unwrap();
     }
@@ -196,7 +197,7 @@ pub fn start_subtask(
     }
 
     info!("Task {}: Saving recovered messages", id);
-    rec_msgs.save(db_pool.clone()).await.unwrap();
+    rec_msgs.save(conn).await.unwrap();
     measurements_count
   })
 }

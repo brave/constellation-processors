@@ -96,7 +96,7 @@ async fn main() {
     let dl_metrics = Arc::new(DataLakeMetrics::default());
     dl_metrics.register_metrics(&mut registry);
 
-    dl_metrics_server = Some(tokio::spawn(create_metric_server(registry).unwrap()));
+    dl_metrics_server = Some(tokio::spawn(create_metric_server(registry, 9091).unwrap()));
 
     for _ in 0..cli_args.lakesink_consumer_count {
       let dl_metrics = dl_metrics.clone();
@@ -104,7 +104,12 @@ async fn main() {
       let cancel_token = CancellationToken::new();
       let cloned_token = cancel_token.clone();
       dl_tasks.push(tokio::spawn(async move {
-        let res = start_lakesink(dl_metrics, cloned_token.clone()).await;
+        let res = start_lakesink(
+          dl_metrics,
+          cloned_token.clone(),
+          cli_args.output_measurements_to_stdout,
+        )
+        .await;
         if let Err(e) = res {
           error!("Lake sink task failed: {:?}", e);
           process::exit(1);

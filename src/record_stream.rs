@@ -6,7 +6,7 @@ use rdkafka::consumer::{
 };
 use rdkafka::error::{KafkaError, KafkaResult};
 use rdkafka::message::Message;
-use rdkafka::producer::{future_producer::FutureProducer, FutureRecord};
+use rdkafka::producer::{future_producer::FutureProducer, FutureRecord, Producer};
 use rdkafka::topic_partition_list::{Offset, TopicPartitionList};
 use std::env;
 use std::time::Duration;
@@ -19,11 +19,15 @@ const DEFAULT_OUT_KAFKA_TOPIC: &str = "p3a-star-out";
 const KAFKA_BROKERS_ENV_KEY: &str = "KAFKA_BROKERS";
 const KAFKA_ENABLE_PLAINTEXT_ENV_KEY: &str = "KAFKA_ENABLE_PLAINTEXT";
 
+const KAFKA_INIT_TRX_TIMEOUT_SECS: u64 = 30;
+const KAFKA_COMMIT_TRX_TIMEOUT_SECS: u64 = 60 * 30;
+
 #[derive(Debug, Display, Error, From)]
 #[display(fmt = "Record stream error: {}")]
 pub enum RecordStreamError {
   Kafka(KafkaError),
   Deserialize,
+  ProducerNotPresent,
 }
 
 struct KafkaContext;
@@ -68,8 +72,12 @@ impl RecordStream {
     if enable_producer {
       let context = KafkaContext;
       let mut config = Self::new_client_config();
+      let mut config_ref = &mut config;
+      if use_output_topic {
+        config_ref = config_ref.set("transactional.id", "main");
+      }
       result.producer = Some(
-        config
+        config_ref
           .set("message.timeout.ms", "6000")
           .create_with_context(context)
           .unwrap(),
@@ -107,6 +115,36 @@ impl RecordStream {
       result.set("security.protocol", "plaintext");
     }
     result
+  }
+
+  pub fn init_producer_transactions(&self) -> Result<(), RecordStreamError> {
+    Ok(
+      self
+        .producer
+        .as_ref()
+        .ok_or(RecordStreamError::ProducerNotPresent)?
+        .init_transactions(Duration::from_secs(KAFKA_INIT_TRX_TIMEOUT_SECS))?,
+    )
+  }
+
+  pub fn begin_producer_transaction(&self) -> Result<(), RecordStreamError> {
+    Ok(
+      self
+        .producer
+        .as_ref()
+        .ok_or(RecordStreamError::ProducerNotPresent)?
+        .begin_transaction()?,
+    )
+  }
+
+  pub fn commit_producer_transaction(&self) -> Result<(), RecordStreamError> {
+    Ok(
+      self
+        .producer
+        .as_ref()
+        .ok_or(RecordStreamError::ProducerNotPresent)?
+        .commit_transaction(Duration::from_secs(KAFKA_COMMIT_TRX_TIMEOUT_SECS))?,
+    )
   }
 
   pub async fn produce(&self, record: &str) -> Result<(), RecordStreamError> {
