@@ -96,7 +96,7 @@ async fn main() {
     let dl_metrics = Arc::new(DataLakeMetrics::default());
     dl_metrics.register_metrics(&mut registry);
 
-    dl_metrics_server = Some(tokio::spawn(create_metric_server(registry, 9091).unwrap()));
+    dl_metrics_server = Some(tokio::spawn(create_metric_server(registry, 9089).unwrap()));
 
     for _ in 0..cli_args.lakesink_consumer_count {
       let dl_metrics = dl_metrics.clone();

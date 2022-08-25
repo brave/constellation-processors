@@ -5,10 +5,13 @@ use derive_more::{Display, Error, From};
 use std::env;
 use std::str::FromStr;
 use std::sync::Arc;
+use std::time::Duration;
+use tokio::time::sleep;
 use tokio_util::sync::CancellationToken;
 
 const BATCH_SIZE_ENV_KEY: &str = "LAKE_SINK_BATCH_SIZE";
 const BATCH_SIZE_DEFAULT: &str = "1000";
+const BATCH_TIMEOUT_SECS: u64 = 45;
 
 #[derive(Error, From, Display, Debug)]
 #[display(fmt = "Lake sink error: {}")]
@@ -28,7 +31,7 @@ async fn store_batch(
 
   rec_stream.commit_last_consume().await?;
 
-  metrics.records_flushed();
+  metrics.records_flushed(batch.len());
   debug!("Saved batch to lake, committed");
   Ok(())
 }
@@ -50,6 +53,7 @@ pub async fn start_lakesink(
     Some(DataLake::new())
   };
   let mut batch = Vec::with_capacity(batch_size);
+  let batch_timeout = Duration::from_secs(BATCH_TIMEOUT_SECS);
   loop {
     tokio::select! {
       record_res = rec_stream.consume() => {
@@ -68,6 +72,14 @@ pub async fn start_lakesink(
             rec_stream.commit_last_consume().await?;
           }
         };
+      },
+      _ = sleep(batch_timeout) => {
+        if let Some(lake) = lake.as_ref() {
+          if !batch.is_empty() {
+            store_batch(lake, &rec_stream, &batch, &metrics).await?;
+            batch.clear();
+          }
+        }
       },
       _ = cancel_token.cancelled() => {
         info!("Ending lakesink task...");

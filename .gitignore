@@ -1,6 +1,3 @@
 /target
 .env
-buffer
-local_notes
 *.sqldump
-nested-sta-rs

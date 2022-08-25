@@ -65,11 +65,9 @@ impl DataLakeMetrics {
     self.batch_record_total.inc();
   }
 
-  pub fn records_flushed(&self) {
-    self
-      .records_saved_total
-      .inc_by(self.batch_record_total.get());
-    self.batch_record_total.set(0);
+  pub fn records_flushed(&self, count: usize) {
+    self.records_saved_total.inc_by(count as u64);
+    self.batch_record_total.dec_by(count as u64);
   }
 
   pub fn register_metrics(&self, registry: &mut Registry) {
