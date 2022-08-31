@@ -1,6 +1,6 @@
 use crate::lake::{DataLake, DataLakeError};
 use crate::prometheus::DataLakeMetrics;
-use crate::record_stream::{RecordStream, RecordStreamError};
+use crate::record_stream::{DynRecordStream, KafkaRecordStream, RecordStream, RecordStreamError};
 use derive_more::{Display, Error, From};
 use std::env;
 use std::str::FromStr;
@@ -22,7 +22,7 @@ pub enum LakeSinkError {
 
 async fn store_batch(
   lake: &DataLake,
-  rec_stream: &RecordStream,
+  rec_stream: &DynRecordStream,
   batch: &[String],
   metrics: &DataLakeMetrics,
 ) -> Result<(), LakeSinkError> {
@@ -45,7 +45,7 @@ pub async fn start_lakesink(
     usize::from_str(&env::var(BATCH_SIZE_ENV_KEY).unwrap_or(BATCH_SIZE_DEFAULT.to_string()))
       .unwrap_or_else(|_| panic!("{} must be a positive integer", BATCH_SIZE_ENV_KEY));
 
-  let rec_stream = RecordStream::new(false, true, true);
+  let rec_stream = KafkaRecordStream::new(false, true, true);
 
   let lake = if output_measurements_to_stdout {
     None

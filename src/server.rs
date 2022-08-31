@@ -1,5 +1,5 @@
 use crate::prometheus::{create_metric_server, WebMetrics};
-use crate::record_stream::RecordStream;
+use crate::record_stream::{KafkaRecordStream, RecordStreamArc};
 use crate::star::{parse_message, AppSTARError};
 use actix_web::{
   dev::Service,
@@ -27,7 +27,7 @@ pub enum WebError {
 }
 
 pub struct ServerState {
-  pub rec_stream: RecordStream,
+  pub rec_stream: RecordStreamArc,
   pub web_metrics: Arc<WebMetrics>,
 }
 
@@ -63,7 +63,7 @@ async fn main_handler(
 
 pub async fn start_server(worker_count: usize) -> std::io::Result<()> {
   let state = Data::new(ServerState {
-    rec_stream: RecordStream::new(true, false, false),
+    rec_stream: Arc::new(KafkaRecordStream::new(true, false, false)),
     web_metrics: Arc::new(WebMetrics::new()),
   });
 

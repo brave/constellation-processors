@@ -91,3 +91,225 @@ impl RecoveredMessages {
     Ok(())
   }
 }
+
+#[cfg(test)]
+mod tests {
+  use super::*;
+  use crate::models::create_db_pool;
+  use dotenv::dotenv;
+
+  #[tokio::test]
+  async fn add_and_save() {
+    dotenv().ok();
+    let mut recovered_msgs = RecoveredMessages::default();
+
+    let new_rec_msgs = vec![
+      RecoveredMessage {
+        id: 0,
+        msg_tag: vec![51; 20],
+        epoch_tag: 2,
+        metric_name: "test".to_string(),
+        metric_value: "1".to_string(),
+        parent_recovered_msg_tag: None,
+        count: 12,
+        key: vec![88; 32],
+        has_children: true,
+      },
+      RecoveredMessage {
+        id: 0,
+        msg_tag: vec![52; 20],
+        epoch_tag: 2,
+        metric_name: "test".to_string(),
+        metric_value: "2".to_string(),
+        parent_recovered_msg_tag: None,
+        count: 25,
+        key: vec![77; 32],
+        has_children: true,
+      },
+      RecoveredMessage {
+        id: 0,
+        msg_tag: vec![53; 20],
+        epoch_tag: 3,
+        metric_name: "test".to_string(),
+        metric_value: "3".to_string(),
+        parent_recovered_msg_tag: None,
+        count: 7,
+        key: vec![99; 32],
+        has_children: true,
+      },
+    ];
+
+    for rec_msg in new_rec_msgs {
+      recovered_msgs.add(rec_msg);
+    }
+
+    assert_eq!(
+      recovered_msgs.get_mut(2, &vec![51; 20]).unwrap().key,
+      vec![88u8; 32]
+    );
+    assert_eq!(
+      recovered_msgs.get_mut(2, &vec![52; 20]).unwrap().key,
+      vec![77u8; 32]
+    );
+    assert_eq!(
+      recovered_msgs.get_mut(3, &vec![53; 20]).unwrap().key,
+      vec![99u8; 32]
+    );
+    assert!(recovered_msgs.get_mut(4, &vec![53; 20]).is_none());
+    assert!(recovered_msgs.get_mut(3, &vec![55; 20]).is_none());
+
+    let db_pool = Arc::new(create_db_pool(true));
+    let conn = Arc::new(Mutex::new(db_pool.get().unwrap()));
+
+    recovered_msgs.save(conn.clone()).await.unwrap();
+    recovered_msgs = RecoveredMessages::default();
+    for epoch in 0..6 {
+      let tags = vec![
+        vec![51u8; 20],
+        vec![52u8; 20],
+        vec![53u8; 20],
+        vec![54u8; 20],
+        vec![55u8; 20],
+      ];
+      recovered_msgs
+        .fetch_recovered(conn.clone(), epoch, tags)
+        .await
+        .unwrap();
+    }
+
+    assert_eq!(
+      recovered_msgs.get_mut(2, &vec![51; 20]).unwrap().key,
+      vec![88u8; 32]
+    );
+    assert_eq!(
+      recovered_msgs.get_mut(2, &vec![52; 20]).unwrap().key,
+      vec![77u8; 32]
+    );
+    assert_eq!(
+      recovered_msgs.get_mut(3, &vec![53; 20]).unwrap().key,
+      vec![99u8; 32]
+    );
+    assert!(recovered_msgs.get_mut(4, &vec![53u8; 20]).is_none());
+    assert!(recovered_msgs.get_mut(3, &vec![55u8; 20]).is_none());
+  }
+
+  #[tokio::test]
+  async fn update_and_save() {
+    dotenv().ok();
+
+    let new_rec_msgs = vec![
+      NewRecoveredMessage {
+        msg_tag: vec![60; 20],
+        epoch_tag: 3,
+        metric_name: "test".to_string(),
+        metric_value: "3".to_string(),
+        parent_recovered_msg_tag: None,
+        count: 20,
+        key: vec![20; 32],
+        has_children: true,
+      },
+      NewRecoveredMessage {
+        msg_tag: vec![60; 20],
+        epoch_tag: 4,
+        metric_name: "test".to_string(),
+        metric_value: "3".to_string(),
+        parent_recovered_msg_tag: None,
+        count: 40,
+        key: vec![40; 32],
+        has_children: true,
+      },
+    ];
+
+    let db_pool = Arc::new(create_db_pool(true));
+    let conn = Arc::new(Mutex::new(db_pool.get().unwrap()));
+
+    new_rec_msgs
+      .clone()
+      .insert_batch(conn.clone())
+      .await
+      .unwrap();
+
+    let mut recovered_msgs = RecoveredMessages::default();
+
+    for epoch in 3..=4 {
+      let mut rec_msg = RecoveredMessage::list(conn.clone(), epoch, vec![vec![60; 20]])
+        .await
+        .unwrap()[0]
+        .clone();
+      rec_msg.count += 5;
+      recovered_msgs.add(rec_msg);
+    }
+
+    recovered_msgs.save(conn.clone()).await.unwrap();
+
+    for epoch in 3..=4 {
+      let rec_msg = RecoveredMessage::list(conn.clone(), epoch, vec![vec![60; 20]])
+        .await
+        .unwrap()[0]
+        .clone();
+      assert_eq!(rec_msg.count, rec_msg.key[0] as i64 + 5);
+    }
+  }
+
+  #[tokio::test]
+  async fn parent_tags() {
+    dotenv().ok();
+
+    let mut recovered_msgs = RecoveredMessages::default();
+
+    let new_rec_msgs = vec![
+      RecoveredMessage {
+        id: 0,
+        msg_tag: vec![51; 20],
+        epoch_tag: 2,
+        metric_name: "test".to_string(),
+        metric_value: "1".to_string(),
+        parent_recovered_msg_tag: None,
+        count: 12,
+        key: vec![88; 32],
+        has_children: true,
+      },
+      RecoveredMessage {
+        id: 0,
+        msg_tag: vec![52; 20],
+        epoch_tag: 2,
+        metric_name: "test".to_string(),
+        metric_value: "2".to_string(),
+        parent_recovered_msg_tag: Some(vec![51; 20]),
+        count: 25,
+        key: vec![77; 32],
+        has_children: true,
+      },
+      RecoveredMessage {
+        id: 0,
+        msg_tag: vec![53; 20],
+        epoch_tag: 2,
+        metric_name: "test".to_string(),
+        metric_value: "3".to_string(),
+        parent_recovered_msg_tag: Some(vec![52; 20]),
+        count: 7,
+        key: vec![99; 32],
+        has_children: true,
+      },
+    ];
+
+    for rec_msg in new_rec_msgs {
+      recovered_msgs.add(rec_msg);
+    }
+
+    assert_eq!(
+      recovered_msgs.get_tags_by_parent(2, None),
+      vec![vec![51u8; 20]]
+    );
+
+    assert_eq!(
+      recovered_msgs.get_tags_by_parent(2, Some(vec![51; 20])),
+      vec![vec![52u8; 20]]
+    );
+
+    assert_eq!(
+      recovered_msgs.get_tags_by_parent(2, Some(vec![52; 20])),
+      vec![vec![53u8; 20]]
+    );
+  }
+}

@@ -6,7 +6,7 @@ mod report;
 
 use crate::epoch::get_current_epoch;
 use crate::models::{create_db_pool, PgStoreError};
-use crate::record_stream::{RecordStream, RecordStreamError};
+use crate::record_stream::{KafkaRecordStream, RecordStream, RecordStreamArc, RecordStreamError};
 use crate::star::AppSTARError;
 use consume::consume_and_group;
 use derive_more::{Display, Error, From};
@@ -20,8 +20,8 @@ use std::str::FromStr;
 use std::sync::{Arc, Mutex};
 use tokio::task::JoinError;
 
-const K_THRESHOLD_ENV_KEY: &str = "K_THRESHOLD";
-const K_THRESHOLD_DEFAULT: &str = "100";
+pub const K_THRESHOLD_ENV_KEY: &str = "K_THRESHOLD";
+pub const K_THRESHOLD_DEFAULT: &str = "100";
 
 #[derive(Error, From, Display, Debug)]
 #[display(fmt = "Aggregator error: {}")]
@@ -47,14 +47,14 @@ pub async fn start_aggregation(
     usize::from_str(&env::var(K_THRESHOLD_ENV_KEY).unwrap_or(K_THRESHOLD_DEFAULT.to_string()))
       .unwrap_or_else(|_| panic!("{} must be a positive integer", K_THRESHOLD_ENV_KEY));
 
-  let mut out_stream = if output_measurements_to_stdout {
+  let mut out_stream: Option<RecordStreamArc> = if output_measurements_to_stdout {
     None
   } else {
-    Some(Arc::new(RecordStream::new(true, false, true)))
+    Some(Arc::new(KafkaRecordStream::new(true, false, true)))
   };
-  let in_stream = RecordStream::new(false, true, false);
+  let in_stream = KafkaRecordStream::new(false, true, false);
 
-  let db_pool = Arc::new(create_db_pool());
+  let db_pool = Arc::new(create_db_pool(false));
 
   info!("Starting aggregation...");
 

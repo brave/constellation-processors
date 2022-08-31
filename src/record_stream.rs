@@ -1,3 +1,4 @@
+use async_trait::async_trait;
 use derive_more::{Display, Error, From};
 use rdkafka::client::ClientContext;
 use rdkafka::config::ClientConfig;
@@ -9,8 +10,10 @@ use rdkafka::message::Message;
 use rdkafka::producer::{future_producer::FutureProducer, FutureRecord, Producer};
 use rdkafka::topic_partition_list::{Offset, TopicPartitionList};
 use std::env;
+use std::sync::Arc;
 use std::time::Duration;
 use tokio::sync::Mutex;
+use tokio::time::sleep;
 
 const KAFKA_ENC_TOPIC_ENV_KEY: &str = "KAFKA_ENCRYPTED_TOPIC";
 const KAFKA_OUT_TOPIC_ENV_KEY: &str = "KAFKA_OUTPUT_TOPIC";
@@ -28,6 +31,7 @@ pub enum RecordStreamError {
   Kafka(KafkaError),
   Deserialize,
   ProducerNotPresent,
+  TestConsumeTimeout,
 }
 
 struct KafkaContext;
@@ -48,14 +52,32 @@ impl ConsumerContext for KafkaContext {
   }
 }
 
-pub struct RecordStream {
+#[async_trait]
+pub trait RecordStream {
+  fn init_producer_transactions(&self) -> Result<(), RecordStreamError>;
+
+  fn begin_producer_transaction(&self) -> Result<(), RecordStreamError>;
+
+  fn commit_producer_transaction(&self) -> Result<(), RecordStreamError>;
+
+  async fn produce(&self, record: &str) -> Result<(), RecordStreamError>;
+
+  async fn consume(&self) -> Result<String, RecordStreamError>;
+
+  async fn commit_last_consume(&self) -> Result<(), RecordStreamError>;
+}
+
+pub type DynRecordStream = dyn RecordStream + Send + Sync;
+pub type RecordStreamArc = Arc<DynRecordStream>;
+
+pub struct KafkaRecordStream {
   producer: Option<FutureProducer<KafkaContext>>,
   consumer: Option<StreamConsumer<KafkaContext>>,
   tpl: Mutex<TopicPartitionList>,
   topic: String,
 }
 
-impl RecordStream {
+impl KafkaRecordStream {
   pub fn new(enable_producer: bool, enable_consumer: bool, use_output_topic: bool) -> Self {
     let topic = if use_output_topic {
       env::var(KAFKA_OUT_TOPIC_ENV_KEY).unwrap_or(DEFAULT_OUT_KAFKA_TOPIC.to_string())
@@ -63,7 +85,7 @@ impl RecordStream {
       env::var(KAFKA_ENC_TOPIC_ENV_KEY).unwrap_or(DEFAULT_ENC_KAFKA_TOPIC.to_string())
     };
 
-    let mut result = RecordStream {
+    let mut result = Self {
       producer: None,
       consumer: None,
       tpl: Mutex::new(TopicPartitionList::new()),
@@ -116,8 +138,11 @@ impl RecordStream {
     }
     result
   }
+}
 
-  pub fn init_producer_transactions(&self) -> Result<(), RecordStreamError> {
+#[async_trait]
+impl RecordStream for KafkaRecordStream {
+  fn init_producer_transactions(&self) -> Result<(), RecordStreamError> {
     Ok(
       self
         .producer
@@ -127,7 +152,7 @@ impl RecordStream {
     )
   }
 
-  pub fn begin_producer_transaction(&self) -> Result<(), RecordStreamError> {
+  fn begin_producer_transaction(&self) -> Result<(), RecordStreamError> {
     Ok(
       self
         .producer
@@ -137,7 +162,7 @@ impl RecordStream {
     )
   }
 
-  pub fn commit_producer_transaction(&self) -> Result<(), RecordStreamError> {
+  fn commit_producer_transaction(&self) -> Result<(), RecordStreamError> {
     Ok(
       self
         .producer
@@ -147,7 +172,7 @@ impl RecordStream {
     )
   }
 
-  pub async fn produce(&self, record: &str) -> Result<(), RecordStreamError> {
+  async fn produce(&self, record: &str) -> Result<(), RecordStreamError> {
     let producer = self.producer.as_ref().expect("Kafka producer not enabled");
     let record: FutureRecord<str, str> = FutureRecord::to(&self.topic).payload(record);
     let send_result = producer.send(record, Duration::from_secs(12)).await;
@@ -157,7 +182,7 @@ impl RecordStream {
     }
   }
 
-  pub async fn consume(&self) -> Result<String, RecordStreamError> {
+  async fn consume(&self) -> Result<String, RecordStreamError> {
     let consumer = self.consumer.as_ref().expect("Kafka consumer not enabled");
     let msg = consumer.recv().await?;
     let payload = match msg.payload_view::<str>() {
@@ -178,11 +203,51 @@ impl RecordStream {
     Ok(payload.to_string())
   }
 
-  pub async fn commit_last_consume(&self) -> Result<(), RecordStreamError> {
+  async fn commit_last_consume(&self) -> Result<(), RecordStreamError> {
     let consumer = self.consumer.as_ref().expect("Kafka consumer not enabled");
     let tpl = self.tpl.lock().await;
     trace!("committing = {:?}", tpl);
     consumer.commit(&tpl, CommitMode::Sync)?;
+    Ok(())
+  }
+}
+
+#[derive(Default)]
+pub struct TestRecordStream {
+  pub records_to_consume: Mutex<Vec<String>>,
+  pub records_produced: Mutex<Vec<String>>,
+}
+
+#[async_trait]
+impl RecordStream for TestRecordStream {
+  fn init_producer_transactions(&self) -> Result<(), RecordStreamError> {
+    Ok(())
+  }
+
+  fn begin_producer_transaction(&self) -> Result<(), RecordStreamError> {
+    Ok(())
+  }
+
+  fn commit_producer_transaction(&self) -> Result<(), RecordStreamError> {
+    Ok(())
+  }
+
+  async fn produce(&self, record: &str) -> Result<(), RecordStreamError> {
+    self.records_produced.lock().await.push(record.to_string());
+    Ok(())
+  }
+
+  async fn consume(&self) -> Result<String, RecordStreamError> {
+    let mut records_to_consume = self.records_to_consume.lock().await;
+    if records_to_consume.is_empty() {
+      drop(records_to_consume);
+      sleep(Duration::from_secs(90)).await;
+      return Err(RecordStreamError::TestConsumeTimeout);
+    }
+    Ok(records_to_consume.remove(0))
+  }
+
+  async fn commit_last_consume(&self) -> Result<(), RecordStreamError> {
     Ok(())
   }
 }

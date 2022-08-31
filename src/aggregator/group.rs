@@ -11,6 +11,9 @@ use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 use tokio::task::JoinHandle;
 
+const DB_WORKERS: usize = 4;
+const INSERT_BATCH_SIZE: usize = 10000;
+
 #[derive(Default, Clone)]
 pub struct MessageChunk {
   pub new_msgs: Vec<NestedMessage>,
@@ -27,9 +30,6 @@ type PendingMessageMap = HashMap<Vec<u8>, Vec<PendingMessage>>;
 pub struct GroupedMessages {
   pub msg_chunks: ChunksMap,
 }
-
-const DB_WORKERS: usize = 4;
-const INSERT_BATCH_SIZE: usize = 10000;
 
 impl GroupedMessages {
   pub fn add(&mut self, msg: NestedMessage, parent_msg_tag: Option<&[u8]>) {
@@ -145,5 +145,185 @@ impl GroupedMessages {
       }
     }
     result
+  }
+}
+
+#[cfg(test)]
+mod tests {
+  use super::*;
+  use crate::models::{create_db_pool, NewRecoveredMessage};
+  use crate::star::generate_test_message;
+  use dotenv::dotenv;
+  use nested_sta_rs::randomness::testing::LocalFetcher;
+
+  #[tokio::test]
+  async fn basic_group_and_pending_storage() {
+    dotenv().ok();
+    let mut grouped_msgs = GroupedMessages::default();
+
+    let fetcher = LocalFetcher::new();
+
+    let msg_infos = vec![
+      (0, "a|0"),
+      (0, "a|0"),
+      (0, "a|1"),
+      (1, "a|2"),
+      (1, "a|3"),
+      (2, "a|4"),
+      (3, "a|4"),
+    ];
+
+    for (epoch, measurement) in msg_infos {
+      grouped_msgs.add(
+        generate_test_message(epoch, &vec![measurement.as_bytes().to_vec()], &fetcher),
+        None,
+      );
+    }
+
+    let expected_epoch_counts = vec![(0, vec![1, 2]), (1, vec![1, 1]), (2, vec![1]), (3, vec![1])];
+
+    let db_pool = Arc::new(create_db_pool(true));
+
+    let expected_epochs = vec![0, 1, 2, 3];
+
+    let mut epochs: Vec<u8> = grouped_msgs.msg_chunks.keys().map(|v| *v).collect();
+    epochs.sort();
+    assert_eq!(epochs, expected_epochs);
+
+    for (epoch, expected_tag_counts) in &expected_epoch_counts {
+      let epoch_map = grouped_msgs.msg_chunks.get(&epoch).unwrap();
+      let mut tag_counts: Vec<usize> = epoch_map.values().map(|v| v.new_msgs.len()).collect();
+      tag_counts.sort();
+      assert_eq!(&tag_counts, expected_tag_counts);
+    }
+
+    let conn = Arc::new(Mutex::new(db_pool.get().unwrap()));
+    grouped_msgs.store_new_pending_msgs(conn).await.unwrap();
+
+    grouped_msgs = GroupedMessages::default();
+
+    let msg_infos = vec![(0, "a|0"), (1, "a|2"), (2, "a|7"), (3, "a|4")];
+
+    for (epoch, measurement) in msg_infos {
+      grouped_msgs.add(
+        generate_test_message(epoch, &vec![measurement.as_bytes().to_vec()], &fetcher),
+        None,
+      );
+    }
+
+    // Should fetch pending messages for new message tags
+    grouped_msgs.fetch_pending(db_pool.clone()).await.unwrap();
+
+    let mut epochs: Vec<u8> = grouped_msgs.msg_chunks.keys().map(|v| *v).collect();
+    epochs.sort();
+    assert_eq!(epochs, expected_epochs);
+
+    let expected_epoch_counts = vec![(0, vec![3]), (1, vec![2]), (2, vec![1]), (3, vec![2])];
+
+    for (epoch, expected_tag_counts) in &expected_epoch_counts {
+      let epoch_map = grouped_msgs.msg_chunks.get(&epoch).unwrap();
+      let mut tag_counts: Vec<usize> = epoch_map
+        .values()
+        .map(|v| v.new_msgs.len() + v.pending_msgs.len())
+        .collect();
+      tag_counts.sort();
+      assert_eq!(&tag_counts, expected_tag_counts);
+    }
+  }
+
+  #[test]
+  fn chunk_split() {
+    let mut grouped_msgs = GroupedMessages::default();
+    let epoch_tag_counts = vec![(0, 42), (1, 38), (2, 52), (3, 60)];
+
+    let fetcher = LocalFetcher::new();
+    for (epoch, tag_count) in &epoch_tag_counts {
+      for i in 0..*tag_count {
+        for _ in 0..2 {
+          grouped_msgs.add(
+            generate_test_message(
+              *epoch,
+              &vec![format!("a|{}", i).as_bytes().to_vec()],
+              &fetcher,
+            ),
+            None,
+          );
+        }
+      }
+    }
+
+    let split_grouped_msgs = grouped_msgs.split(7);
+
+    for grouped_msgs in &split_grouped_msgs {
+      let mut epochs: Vec<u8> = grouped_msgs.msg_chunks.keys().map(|v| *v).collect();
+      epochs.sort();
+      assert_eq!(epochs, vec![0, 1, 2, 3]);
+      for epoch_map in grouped_msgs.msg_chunks.values() {
+        assert!(epoch_map.len() >= 5 && epoch_map.len() <= 12);
+        for tag_val in epoch_map.values() {
+          assert_eq!(tag_val.new_msgs.len(), 2);
+        }
+      }
+    }
+
+    for (epoch, expected_tag_count) in &epoch_tag_counts {
+      assert_eq!(
+        split_grouped_msgs
+          .iter()
+          .fold(0, |acc, g| acc + g.msg_chunks.get(epoch).unwrap().len()),
+        *expected_tag_count
+      );
+    }
+  }
+
+  #[tokio::test]
+  async fn fetch_recovered() {
+    dotenv().ok();
+    let mut grouped_msgs = GroupedMessages::default();
+    let fetcher = LocalFetcher::new();
+
+    let msg_infos = vec![(0, "a|1"), (1, "a|1"), (2, "a|2")];
+
+    for (epoch, measurement) in msg_infos {
+      grouped_msgs.add(
+        generate_test_message(epoch, &vec![measurement.as_bytes().to_vec()], &fetcher),
+        None,
+      );
+    }
+
+    let new_rec_msgs: Vec<NewRecoveredMessage> = (0..2)
+      .map(|i| NewRecoveredMessage {
+        msg_tag: grouped_msgs
+          .msg_chunks
+          .get(&i)
+          .unwrap()
+          .keys()
+          .next()
+          .unwrap()
+          .to_vec(),
+        epoch_tag: i as i16,
+        metric_name: "a".to_string(),
+        metric_value: "1".to_string(),
+        parent_recovered_msg_tag: None,
+        count: 1,
+        key: Vec::new(),
+        has_children: true,
+      })
+      .collect();
+
+    let db_pool = Arc::new(create_db_pool(true));
+    let conn = Arc::new(Mutex::new(db_pool.get().unwrap()));
+    new_rec_msgs.insert_batch(conn.clone()).await.unwrap();
+
+    let mut recovered_msgs = RecoveredMessages::default();
+
+    grouped_msgs
+      .fetch_recovered(conn, &mut recovered_msgs)
+      .await
+      .unwrap();
+
+    assert_eq!(recovered_msgs.map.get(&0).unwrap().len(), 1);
+    assert_eq!(recovered_msgs.map.get(&1).unwrap().len(), 1);
+    assert!(!recovered_msgs.map.contains_key(&2));
   }
 }

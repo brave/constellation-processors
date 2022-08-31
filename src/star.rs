@@ -1,10 +1,13 @@
+use crate::aggregator::{K_THRESHOLD_DEFAULT, K_THRESHOLD_ENV_KEY};
 use derive_more::{Display, Error, From};
 use nested_sta_rs::api::{
-  key_recover, recover, NestedMessage, PartialMeasurement, SerializableNestedMessage,
+  client, key_recover, recover, NestedMessage, PartialMeasurement, SerializableNestedMessage,
 };
 use nested_sta_rs::errors::NestedSTARError;
+use nested_sta_rs::randomness::testing::LocalFetcher as RandomnessFetcher;
 use std::cmp::min;
-use std::str::{from_utf8, Utf8Error};
+use std::env;
+use std::str::{from_utf8, FromStr, Utf8Error};
 
 #[derive(Error, From, Display, Debug)]
 pub enum AppSTARError {
@@ -104,4 +107,28 @@ pub fn recover_msgs(
     measurement: get_measurement_contents(&pms[0])?,
     next_layer_messages,
   })
+}
+
+pub fn generate_test_message(
+  epoch: u8,
+  measurements: &[Vec<u8>],
+  random_fetcher: &RandomnessFetcher,
+) -> NestedMessage {
+  let rrs = client::prepare_measurement(measurements, epoch).unwrap();
+  let req_points = client::construct_randomness_request(&rrs);
+  let req_slice_vec: Vec<&[u8]> = req_points.iter().map(|v| v.as_slice()).collect();
+  let resp = random_fetcher.eval(&req_slice_vec, epoch).unwrap();
+  let points_slice_vec: Vec<&[u8]> = resp
+    .serialized_points
+    .iter()
+    .map(|v| v.as_slice())
+    .collect();
+  let k_threshold =
+    u32::from_str(&env::var(K_THRESHOLD_ENV_KEY).unwrap_or(K_THRESHOLD_DEFAULT.to_string()))
+      .unwrap();
+  let serialized_msg_bytes =
+    client::construct_message(&points_slice_vec, None, &rrs, &None, &[], k_threshold).unwrap();
+  let serialized_msg: SerializableNestedMessage =
+    bincode::deserialize(&serialized_msg_bytes).unwrap();
+  NestedMessage::from(serialized_msg)
 }

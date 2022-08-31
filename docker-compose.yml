@@ -21,7 +21,6 @@ services:
       - star-agg
   db:
     image: postgres
-    restart: always
     ports:
       - 5642:5432
     environment:
@@ -29,6 +28,8 @@ services:
       POSTGRES_PASSWORD: password
     networks:
       - star-agg
+    volumes:
+      - "./misc/create_integration_test_db.sql:/docker-entrypoint-initdb.d/create_integration_test_db.sql"
 
   zookeeper:
     image: bitnami/zookeeper

@@ -4,7 +4,7 @@ use super::report::report_measurements;
 use super::AggregatorError;
 use crate::epoch::is_epoch_expired;
 use crate::models::{DBConnection, DBPool, PendingMessage, RecoveredMessage};
-use crate::record_stream::RecordStream;
+use crate::record_stream::{DynRecordStream, RecordStreamArc};
 use crate::star::{
   parse_message_bincode, recover_key, recover_msgs, AppSTARError, MsgRecoveryInfo,
 };
@@ -15,7 +15,7 @@ use tokio::task::JoinHandle;
 pub async fn process_expired_epochs(
   conn: Arc<Mutex<DBConnection>>,
   current_epoch: u8,
-  out_stream: Option<&RecordStream>,
+  out_stream: Option<&DynRecordStream>,
 ) -> Result<(), AggregatorError> {
   let epochs = RecoveredMessage::list_distinct_epochs(conn.clone()).await?;
   for epoch in epochs {
@@ -127,7 +127,7 @@ pub fn start_subtask(
   id: usize,
   conn: Arc<Mutex<DBConnection>>,
   db_pool: Arc<DBPool>,
-  out_stream: Option<Arc<RecordStream>>,
+  out_stream: Option<RecordStreamArc>,
   mut grouped_msgs: GroupedMessages,
   k_threshold: usize,
 ) -> JoinHandle<i64> {
