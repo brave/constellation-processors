@@ -57,7 +57,7 @@ jobs:
         uses: actions-rs/cargo@v1
         with:
           command: install
-          args: diesel_cli
+          args: --force diesel_cli
 
       - name: Run db migration
         run: diesel migration run

@@ -39,7 +39,7 @@ pub async fn consume_and_group(
 mod tests {
   use super::*;
   use crate::record_stream::TestRecordStream;
-  use crate::star::generate_test_message;
+  use crate::star::tests::generate_test_message;
   use nested_sta_rs::api::SerializableNestedMessage;
   use nested_sta_rs::randomness::testing::LocalFetcher;
 

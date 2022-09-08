@@ -152,7 +152,7 @@ impl GroupedMessages {
 mod tests {
   use super::*;
   use crate::models::{create_db_pool, NewRecoveredMessage};
-  use crate::star::generate_test_message;
+  use crate::star::tests::generate_test_message;
   use dotenv::dotenv;
   use nested_sta_rs::randomness::testing::LocalFetcher;
 

@@ -55,6 +55,9 @@ OPTIONS:
         --server-worker-count <SERVER_WORKER_COUNT>
             Worker task count for server [default: 16]
 
+        --test-epoch <TEST_EPOCH>
+            Current epoch value to use for testing purposes
+
     -V, --version
             Print version information
 ```
@@ -63,7 +66,24 @@ OPTIONS:
 
 Copy `.env.example` to `.env`. Run `docker-compose up -d`.
 
+Run `cargo install diesel_cli` to install the database migration tool. Run `diesel migration run` to execute DDL on Postgres.
+
 Run `cargo run` with the desired arguments.
+
+#### Collecting measurements/sending test measurements
+
+1. Run a collector/server to collect measurements: `cargo run -- -s`
+2. Run the test client in the `misc/test-client` directory. This command will send `k * 10` messages (10 unique measurements) with epoch 1: `cargo run -- -e 1 -u 10`
+
+#### Running aggregation/sinking/viewing results
+
+1. Run data lake sink: `cargo run -- -l`
+2. Run the aggregator, with a test current epoch value (usually the current epoch is fetched from the randomness server directly): `cargo run -- -a --test-epoch 1`
+3. Use [awscli-local](https://github.com/localstack/awscli-local) to list and copy the jsonl files from the `p3a-star-recovered` bucket.
+
+#### Outputting measurements to stdout
+
+The `--output-measurements-to-stdout` switch can be used to output measurements to the console from the data lake sink or aggregator. If this mode is enabled in the aggregator, measurements will not be sent to the "decrypted" Kafka stream/data lake sink.
 
 ### Environment variables
 
@@ -78,7 +98,6 @@ Run `cargo run` with the desired arguments.
 | KAFKA_ENCRYPTED_TOPIC | p3a-star-enc | No | Topic for storing protected messages. |
 | KAFKA_OUTPUT_TOPIC | p3a-star-out | No | Topic for storing recovered measurements. |
 | K_THRESHOLD | 100 | No | The selected _k_ threshold for the nested STAR application. |
-| TEST_EPOCH | | No | Current epoch to use for testing. |
 
 ## Test client
 

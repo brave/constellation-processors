@@ -74,6 +74,9 @@ struct CliArgs {
 
   #[clap(long, default_value = "2", help = "Kafka consumer count for lake sink")]
   lakesink_consumer_count: usize,
+
+  #[clap(long, help = "Current epoch value to use for testing purposes")]
+  test_epoch: Option<u8>,
 }
 
 #[tokio::main]
@@ -125,6 +128,7 @@ async fn main() {
       cli_args.agg_msg_collect_count,
       cli_args.agg_iterations,
       cli_args.output_measurements_to_stdout,
+      cli_args.test_epoch,
     )
     .await
     .unwrap();

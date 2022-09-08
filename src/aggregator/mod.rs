@@ -39,8 +39,13 @@ pub async fn start_aggregation(
   msg_collect_count: usize,
   iterations: usize,
   output_measurements_to_stdout: bool,
+  test_epoch: Option<u8>,
 ) -> Result<(), AggregatorError> {
-  let current_epoch = get_current_epoch().await;
+  let current_epoch = if let Some(epoch) = test_epoch {
+    epoch
+  } else {
+    get_current_epoch().await
+  };
   info!("Current epoch is {}", current_epoch);
 
   let k_threshold =
