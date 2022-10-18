@@ -15,7 +15,7 @@ pub struct RecoveredMessages {
   pub parent_tags_map: ParentTagsMap,
 }
 
-const INSERT_BATCH_SIZE: usize = 10000;
+const INSERT_BATCH_SIZE: usize = 5000;
 
 impl RecoveredMessages {
   pub fn add(&mut self, rec_msg: RecoveredMessage) {

@@ -125,7 +125,7 @@ fn process_one_layer(
 
 pub fn start_subtask(
   id: usize,
-  conn: Arc<Mutex<DBConnection>>,
+  store_conn: Arc<Mutex<DBConnection>>,
   db_pool: Arc<DBPool>,
   out_stream: Option<RecordStreamArc>,
   mut grouped_msgs: GroupedMessages,
@@ -145,7 +145,7 @@ pub fn start_subtask(
       // Fetch recovered message info (which includes key) for collected tags, if available
       debug!("Task {}: Fetching recovered messages", id);
       grouped_msgs
-        .fetch_recovered(conn.clone(), &mut rec_msgs)
+        .fetch_recovered(db_pool.clone(), &mut rec_msgs)
         .await
         .unwrap();
 
@@ -161,7 +161,7 @@ pub fn start_subtask(
 
       debug!("Task {}: Storing new pending messages", id);
       grouped_msgs
-        .store_new_pending_msgs(conn.clone())
+        .store_new_pending_msgs(store_conn.clone())
         .await
         .unwrap();
 
@@ -175,7 +175,7 @@ pub fn start_subtask(
 
     info!("Task {}: Deleting old pending messages", id);
     for (epoch, msg_tag) in pending_tags_to_remove {
-      PendingMessage::delete_tag(conn.clone(), epoch as i16, msg_tag)
+      PendingMessage::delete_tag(store_conn.clone(), epoch as i16, msg_tag)
         .await
         .unwrap();
     }
@@ -197,7 +197,7 @@ pub fn start_subtask(
     }
 
     info!("Task {}: Saving recovered messages", id);
-    rec_msgs.save(conn).await.unwrap();
+    rec_msgs.save(store_conn).await.unwrap();
     measurements_count
   })
 }

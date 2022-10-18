@@ -47,9 +47,12 @@ impl GroupedMessages {
 
   pub async fn fetch_recovered(
     &mut self,
-    conn: Arc<Mutex<DBConnection>>,
+    db_pool: Arc<DBPool>,
     rec_msgs: &mut RecoveredMessages,
   ) -> Result<(), AggregatorError> {
+    let conn = Arc::new(Mutex::new(
+      db_pool.get().map_err(|e| PgStoreError::from(e))?,
+    ));
     for (epoch, epoch_chunks) in self.msg_chunks.iter() {
       let msg_tags: Vec<Vec<u8>> = epoch_chunks.keys().cloned().collect();
       rec_msgs

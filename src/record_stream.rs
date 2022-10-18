@@ -101,6 +101,7 @@ impl KafkaRecordStream {
       result.producer = Some(
         config_ref
           .set("message.timeout.ms", "6000")
+          .set("transaction.timeout.ms", "3600000")
           .create_with_context(context)
           .unwrap(),
       );
@@ -163,13 +164,15 @@ impl RecordStream for KafkaRecordStream {
   }
 
   fn commit_producer_transaction(&self) -> Result<(), RecordStreamError> {
-    Ok(
-      self
-        .producer
-        .as_ref()
-        .ok_or(RecordStreamError::ProducerNotPresent)?
-        .commit_transaction(Duration::from_secs(KAFKA_COMMIT_TRX_TIMEOUT_SECS))?,
-    )
+    let producer = self.producer
+      .as_ref()
+      .ok_or(RecordStreamError::ProducerNotPresent)?;
+    let timeout = Duration::from_secs(KAFKA_COMMIT_TRX_TIMEOUT_SECS);
+    if let Err(e) = producer.commit_transaction(timeout) {
+      producer.abort_transaction(timeout)?;
+      return Err(RecordStreamError::from(e));
+    }
+    Ok(())
   }
 
   async fn produce(&self, record: &str) -> Result<(), RecordStreamError> {

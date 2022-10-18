@@ -55,7 +55,9 @@ pub async fn start_aggregation(
   let mut out_stream: Option<RecordStreamArc> = if output_measurements_to_stdout {
     None
   } else {
-    Some(Arc::new(KafkaRecordStream::new(true, false, true)))
+    let out_stream = Arc::new(KafkaRecordStream::new(true, false, true));
+    out_stream.init_producer_transactions()?;
+    Some(out_stream)
   };
   let in_stream = KafkaRecordStream::new(false, true, false);
 
@@ -77,30 +79,28 @@ pub async fn start_aggregation(
     info!("Consumed {} messages", count);
 
     if let Some(out_stream) = out_stream.as_mut() {
-      out_stream.init_producer_transactions()?;
       out_stream.begin_producer_transaction()?;
     }
 
     // Split message tags/grouped messages into multiple chunks
     // Process each one in a separate task/thread
     let mut tasks = Vec::new();
-    let mut db_connections = Vec::new();
+
+    let store_conn = Arc::new(Mutex::new(
+      db_pool.get().map_err(|e| PgStoreError::from(e))?,
+    ));
+    let store_conn_lock = store_conn.lock().unwrap();
+    store_conn_lock
+      .transaction_manager()
+      .begin_transaction(store_conn_lock.deref())
+      .map_err(|e| PgStoreError::from(e))?;
+    drop(store_conn_lock);
+
     let grouped_msgs_split = grouped_msgs.split(worker_count).into_iter().enumerate();
     for (id, grouped_msgs) in grouped_msgs_split {
-      let conn = Arc::new(Mutex::new(
-        db_pool.get().map_err(|e| PgStoreError::from(e))?,
-      ));
-      let conn_lock = conn.lock().unwrap();
-      conn_lock
-        .transaction_manager()
-        .begin_transaction(conn_lock.deref())
-        .map_err(|e| PgStoreError::from(e))?;
-      drop(conn_lock);
-
-      db_connections.push(conn.clone());
       tasks.push(start_subtask(
         id,
-        conn,
+        store_conn.clone(),
         db_pool.clone(),
         out_stream.clone(),
         grouped_msgs,
@@ -112,14 +112,13 @@ pub async fn start_aggregation(
 
     let total_measurement_count = measurement_counts.iter().sum::<i64>();
 
-    for conn in db_connections {
-      info!("Committing DB transactions");
-      let conn = conn.lock().unwrap();
-      conn
-        .transaction_manager()
-        .commit_transaction(conn.deref())
-        .map_err(|e| PgStoreError::from(e))?;
-    }
+    info!("Committing DB transaction");
+    let store_conn_lock = store_conn.lock().unwrap();
+    store_conn_lock
+      .transaction_manager()
+      .commit_transaction(store_conn_lock.deref())
+      .map_err(|e| PgStoreError::from(e))?;
+    drop(store_conn_lock);
     info!("Reported {} final measurements", total_measurement_count);
 
     if let Some(out_stream) = out_stream.as_ref() {
