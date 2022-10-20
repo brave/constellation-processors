@@ -3,17 +3,18 @@ use super::AggregatorError;
 use crate::record_stream::DynRecordStream;
 use futures::future::{BoxFuture, FutureExt};
 use std::collections::HashMap;
+use std::str::from_utf8;
 
 fn build_full_measurement_json(
   metric_chain: Vec<(String, String)>,
   count: i64,
-) -> Result<String, AggregatorError> {
+) -> Result<Vec<u8>, AggregatorError> {
   let mut full_measurement = HashMap::new();
   for metric in metric_chain {
     full_measurement.insert(metric.0, metric.1);
   }
   full_measurement.insert("count".to_string(), count.to_string());
-  Ok(serde_json::to_string(&full_measurement)?)
+  Ok(serde_json::to_vec(&full_measurement)?)
 }
 
 fn report_measurements_recursive<'a>(
@@ -66,7 +67,7 @@ fn report_measurements_recursive<'a>(
         let full_msmt = build_full_measurement_json(metric_chain, msg.count)?;
         match out_stream {
           Some(o) => o.produce(&full_msmt).await?,
-          None => println!("{}", full_msmt),
+          None => println!("{}", from_utf8(&full_msmt)?),
         };
         msg.count = 0;
       }
@@ -296,10 +297,10 @@ mod tests {
     assert_eq!(rec_epoch_map.get(&vec![53; 20]).unwrap().count, 0);
   }
 
-  fn parse_and_sort_records(records: Vec<String>) -> Vec<serde_json::Value> {
+  fn parse_and_sort_records(records: Vec<Vec<u8>>) -> Vec<serde_json::Value> {
     let mut result: Vec<serde_json::Value> = records
       .iter()
-      .map(|v| serde_json::from_str(v).unwrap())
+      .map(|v| serde_json::from_slice(&v).unwrap())
       .collect();
     result.sort_by(|a, b| {
       let a_num = usize::from_str(a.get("count").unwrap().as_str().unwrap()).unwrap();

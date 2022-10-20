@@ -16,7 +16,7 @@ use nested_sta_rs::errors::NestedSTARError;
 use processing::{process_expired_epochs, start_subtask};
 use std::env;
 use std::ops::Deref;
-use std::str::FromStr;
+use std::str::{FromStr, Utf8Error};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 use tokio::task::JoinError;
@@ -29,6 +29,7 @@ const COOLOFF_SECONDS: u64 = 15;
 #[derive(Error, From, Display, Debug)]
 #[display(fmt = "Aggregator error: {}")]
 pub enum AggregatorError {
+  Utf8(Utf8Error),
   AppSTAR(AppSTARError),
   NestedSTAR(NestedSTARError),
   Database(PgStoreError),

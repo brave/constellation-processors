@@ -8,8 +8,6 @@ use std::str::{from_utf8, Utf8Error};
 
 #[derive(Error, From, Display, Debug)]
 pub enum AppSTARError {
-  #[display(fmt = "failed to decode base64")]
-  Base64(base64::DecodeError),
   #[display(fmt = "failed to decode bincode")]
   Bincode(bincode::Error),
   #[display(fmt = "failed to decode utf8")]
@@ -20,25 +18,12 @@ pub enum AppSTARError {
   Recovery(NestedSTARError),
 }
 
-pub struct ParsedMessageData {
-  pub msg: NestedMessage,
-  pub bincode_msg: Vec<u8>,
-}
-
 pub struct MsgRecoveryInfo {
   pub measurement: (String, String),
   pub next_layer_messages: Option<Vec<NestedMessage>>,
 }
 
-pub fn parse_message(record: &str) -> Result<ParsedMessageData, AppSTARError> {
-  let bincode_msg = base64::decode(record)?;
-  Ok(ParsedMessageData {
-    msg: parse_message_bincode(&bincode_msg)?,
-    bincode_msg,
-  })
-}
-
-pub fn parse_message_bincode(bincode_msg: &[u8]) -> Result<NestedMessage, AppSTARError> {
+pub fn parse_message(bincode_msg: &[u8]) -> Result<NestedMessage, AppSTARError> {
   let smsg: SerializableNestedMessage = bincode::deserialize(bincode_msg)?;
   Ok(NestedMessage::from(smsg))
 }

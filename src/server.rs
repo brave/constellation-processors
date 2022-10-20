@@ -18,6 +18,8 @@ use std::time::Instant;
 
 #[derive(From, Error, Display, Debug)]
 pub enum WebError {
+  #[display(fmt = "failed to decode base64")]
+  Base64(base64::DecodeError),
   #[display(fmt = "Failed to decode utf8: {}", _0)]
   Utf8(Utf8Error),
   #[display(fmt = "Failed to decode STAR message: {}", _0)]
@@ -40,7 +42,7 @@ impl ResponseError for WebError {
 
   fn status_code(&self) -> StatusCode {
     match *self {
-      WebError::STARDecode(_) | WebError::Utf8(_) => StatusCode::BAD_REQUEST,
+      WebError::STARDecode(_) | WebError::Utf8(_) | WebError::Base64(_) => StatusCode::BAD_REQUEST,
       WebError::Internal => StatusCode::INTERNAL_SERVER_ERROR,
     }
   }
@@ -52,8 +54,9 @@ async fn main_handler(
   state: Data<ServerState>,
 ) -> Result<impl Responder, WebError> {
   let body_str = from_utf8(&body)?.trim();
-  parse_message(body_str)?;
-  if let Err(e) = state.rec_stream.produce(body_str).await {
+  let bincode_msg = base64::decode(body_str)?;
+  parse_message(&bincode_msg)?;
+  if let Err(e) = state.rec_stream.produce(&bincode_msg).await {
     error!("Failed to push message: {}", e);
     Err(WebError::Internal)
   } else {

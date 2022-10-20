@@ -60,9 +60,9 @@ pub trait RecordStream {
 
   fn commit_producer_transaction(&self) -> Result<(), RecordStreamError>;
 
-  async fn produce(&self, record: &str) -> Result<(), RecordStreamError>;
+  async fn produce(&self, record: &[u8]) -> Result<(), RecordStreamError>;
 
-  async fn consume(&self) -> Result<String, RecordStreamError>;
+  async fn consume(&self) -> Result<Vec<u8>, RecordStreamError>;
 
   async fn commit_last_consume(&self) -> Result<(), RecordStreamError>;
 }
@@ -179,9 +179,9 @@ impl RecordStream for KafkaRecordStream {
     Ok(())
   }
 
-  async fn produce(&self, record: &str) -> Result<(), RecordStreamError> {
+  async fn produce(&self, record: &[u8]) -> Result<(), RecordStreamError> {
     let producer = self.producer.as_ref().expect("Kafka producer not enabled");
-    let record: FutureRecord<str, str> = FutureRecord::to(&self.topic).payload(record);
+    let record: FutureRecord<str, [u8]> = FutureRecord::to(&self.topic).payload(record);
     let send_result = producer.send(record, Duration::from_secs(12)).await;
     match send_result {
       Ok(_) => Ok(()),
@@ -189,11 +189,12 @@ impl RecordStream for KafkaRecordStream {
     }
   }
 
-  async fn consume(&self) -> Result<String, RecordStreamError> {
+  async fn consume(&self) -> Result<Vec<u8>, RecordStreamError> {
     let consumer = self.consumer.as_ref().expect("Kafka consumer not enabled");
     let msg = consumer.recv().await?;
-    let payload = match msg.payload_view::<str>() {
-      None => Ok(""),
+    let empty = Vec::new();
+    let payload = match msg.payload_view::<[u8]>() {
+      None => Ok(empty.as_slice()),
       Some(s) => s.map_err(|_| RecordStreamError::Deserialize),
     }?;
     trace!(
@@ -207,7 +208,7 @@ impl RecordStream for KafkaRecordStream {
       msg.partition(),
       Offset::Offset(msg.offset() + 1),
     )?;
-    Ok(payload.to_string())
+    Ok(payload.to_vec())
   }
 
   async fn commit_last_consume(&self) -> Result<(), RecordStreamError> {
@@ -221,8 +222,8 @@ impl RecordStream for KafkaRecordStream {
 
 #[derive(Default)]
 pub struct TestRecordStream {
-  pub records_to_consume: Mutex<Vec<String>>,
-  pub records_produced: Mutex<Vec<String>>,
+  pub records_to_consume: Mutex<Vec<Vec<u8>>>,
+  pub records_produced: Mutex<Vec<Vec<u8>>>,
 }
 
 #[async_trait]
@@ -239,12 +240,12 @@ impl RecordStream for TestRecordStream {
     Ok(())
   }
 
-  async fn produce(&self, record: &str) -> Result<(), RecordStreamError> {
-    self.records_produced.lock().await.push(record.to_string());
+  async fn produce(&self, record: &[u8]) -> Result<(), RecordStreamError> {
+    self.records_produced.lock().await.push(record.to_vec());
     Ok(())
   }
 
-  async fn consume(&self) -> Result<String, RecordStreamError> {
+  async fn consume(&self) -> Result<Vec<u8>, RecordStreamError> {
     let mut records_to_consume = self.records_to_consume.lock().await;
     if records_to_consume.is_empty() {
       drop(records_to_consume);

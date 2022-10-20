@@ -3,7 +3,7 @@ use crate::prometheus::DataLakeMetrics;
 use crate::record_stream::{DynRecordStream, KafkaRecordStream, RecordStream, RecordStreamError};
 use derive_more::{Display, Error, From};
 use std::env;
-use std::str::FromStr;
+use std::str::{from_utf8, FromStr, Utf8Error};
 use std::sync::Arc;
 use std::time::Duration;
 use tokio::time::sleep;
@@ -16,6 +16,7 @@ const BATCH_TIMEOUT_SECS: u64 = 45;
 #[derive(Error, From, Display, Debug)]
 #[display(fmt = "Lake sink error: {}")]
 pub enum LakeSinkError {
+  Utf8(Utf8Error),
   RecordStream(RecordStreamError),
   Lake(DataLakeError),
 }
@@ -23,10 +24,14 @@ pub enum LakeSinkError {
 async fn store_batch(
   lake: &DataLake,
   rec_stream: &DynRecordStream,
-  batch: &[String],
+  batch: &[Vec<u8>],
   metrics: &DataLakeMetrics,
 ) -> Result<(), LakeSinkError> {
-  let contents = batch.join("\n");
+  let json_lines: Vec<String> = batch
+    .iter()
+    .map(|v| from_utf8(v).map(|v| v.to_string()))
+    .collect::<Result<Vec<String>, Utf8Error>>()?;
+  let contents = json_lines.join("\n");
   lake.store(&contents).await?;
 
   rec_stream.commit_last_consume().await?;
@@ -68,7 +73,7 @@ pub async fn start_lakesink(
             }
           },
           None => {
-            println!("{}", record);
+            println!("{}", from_utf8(&record)?);
             rec_stream.commit_last_consume().await?;
           }
         };

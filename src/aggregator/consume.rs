@@ -20,7 +20,7 @@ pub async fn consume_and_group(
         let msg = msg_res?;
         let msg_data = parse_message(&msg)?;
 
-        grouped_msgs.add(msg_data.msg, None);
+        grouped_msgs.add(msg_data, None);
         count += 1;
         if count >= msg_collect_count {
           break;
@@ -84,14 +84,12 @@ mod tests {
 
     let mut records_to_consume = record_stream.records_to_consume.lock().await;
     for (epoch, measurement) in msg_infos {
-      let msg = base64::encode(
-        bincode::serialize(&SerializableNestedMessage::from(generate_test_message(
-          epoch,
-          &vec![measurement.as_bytes().to_vec()],
-          &fetcher,
-        )))
-        .unwrap(),
-      );
+      let msg = bincode::serialize(&SerializableNestedMessage::from(generate_test_message(
+        epoch,
+        &vec![measurement.as_bytes().to_vec()],
+        &fetcher,
+      )))
+      .unwrap();
       records_to_consume.push(msg);
     }
     drop(records_to_consume);

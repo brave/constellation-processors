@@ -5,9 +5,7 @@ use super::AggregatorError;
 use crate::epoch::is_epoch_expired;
 use crate::models::{DBConnection, DBPool, PendingMessage, RecoveredMessage};
 use crate::record_stream::{DynRecordStream, RecordStreamArc};
-use crate::star::{
-  parse_message_bincode, recover_key, recover_msgs, AppSTARError, MsgRecoveryInfo,
-};
+use crate::star::{parse_message, recover_key, recover_msgs, AppSTARError, MsgRecoveryInfo};
 use nested_sta_rs::errors::NestedSTARError;
 use std::sync::{Arc, Mutex};
 use tokio::task::JoinHandle;
@@ -60,7 +58,7 @@ fn process_one_layer(
       let mut msgs = Vec::new();
       msgs.append(&mut chunk.new_msgs);
       for pending_msg in chunk.pending_msgs.drain(..) {
-        msgs.push(parse_message_bincode(&pending_msg.message)?);
+        msgs.push(parse_message(&pending_msg.message)?);
       }
 
       // if a recovered msg exists, use the key that was already recovered.
