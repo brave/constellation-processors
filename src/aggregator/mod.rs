@@ -18,10 +18,13 @@ use std::env;
 use std::ops::Deref;
 use std::str::FromStr;
 use std::sync::{Arc, Mutex};
+use std::time::Duration;
 use tokio::task::JoinError;
+use tokio::time::sleep;
 
 pub const K_THRESHOLD_ENV_KEY: &str = "K_THRESHOLD";
 pub const K_THRESHOLD_DEFAULT: &str = "100";
+const COOLOFF_SECONDS: u64 = 15;
 
 #[derive(Error, From, Display, Debug)]
 #[display(fmt = "Aggregator error: {}")]
@@ -32,6 +35,18 @@ pub enum AggregatorError {
   RecordStream(RecordStreamError),
   Join(JoinError),
   JSONSerialize(serde_json::Error),
+}
+
+fn create_output_stream(
+  output_measurements_to_stdout: bool,
+) -> Result<Option<RecordStreamArc>, AggregatorError> {
+  Ok(if output_measurements_to_stdout {
+    None
+  } else {
+    let out_stream = Arc::new(KafkaRecordStream::new(true, false, true));
+    out_stream.init_producer_transactions()?;
+    Some(out_stream)
+  })
 }
 
 pub async fn start_aggregation(
@@ -52,19 +67,15 @@ pub async fn start_aggregation(
     usize::from_str(&env::var(K_THRESHOLD_ENV_KEY).unwrap_or(K_THRESHOLD_DEFAULT.to_string()))
       .unwrap_or_else(|_| panic!("{} must be a positive integer", K_THRESHOLD_ENV_KEY));
 
-  let mut out_stream: Option<RecordStreamArc> = if output_measurements_to_stdout {
-    None
-  } else {
-    Some(Arc::new(KafkaRecordStream::new(true, false, true)))
-  };
-  let in_stream = KafkaRecordStream::new(false, true, false);
-
   let db_pool = Arc::new(create_db_pool(false));
 
   info!("Starting aggregation...");
 
   for i in 0..iterations {
     info!("Starting iteration {}", i);
+
+    let mut out_stream = create_output_stream(output_measurements_to_stdout)?;
+    let in_stream = KafkaRecordStream::new(false, true, false);
 
     info!("Consuming messages from stream");
     // Consume & group as much data from Kafka as possible
@@ -129,11 +140,15 @@ pub async fn start_aggregation(
     in_stream.commit_last_consume().await?;
 
     info!("Reported {} final measurements", total_measurement_count);
+
+    info!("Cooling off for {} seconds", COOLOFF_SECONDS);
+    sleep(Duration::from_secs(COOLOFF_SECONDS)).await;
   }
 
   // Check for expired epochs. Send off partial measurements.
   // Delete pending/recovered messages from DB.
   info!("Checking/processing expired epochs");
+  let out_stream = create_output_stream(output_measurements_to_stdout)?;
   process_expired_epochs(
     Arc::new(Mutex::new(
       db_pool.get().map_err(|e| PgStoreError::from(e))?,

@@ -54,6 +54,7 @@ fn process_one_layer(
         continue;
       }
       let new_msg_count = chunk.new_msgs.len();
+      let has_pending_msgs = !chunk.pending_msgs.is_empty();
 
       // concat new messages from kafka, and pending messages from PG into one vec
       let mut msgs = Vec::new();
@@ -115,7 +116,9 @@ fn process_one_layer(
         }
       }
 
-      pending_tags_to_remove.push((*epoch, msg_tag.clone()));
+      if has_pending_msgs {
+        pending_tags_to_remove.push((*epoch, msg_tag.clone()));
+      }
       has_processed = true;
     }
   }
@@ -151,7 +154,10 @@ pub fn start_subtask(
 
       // Fetch pending messages for collected tags, if available
       debug!("Task {}: Fetching pending messages", id);
-      grouped_msgs.fetch_pending(db_pool.clone()).await.unwrap();
+      grouped_msgs
+        .fetch_pending(db_pool.clone(), &mut rec_msgs)
+        .await
+        .unwrap();
 
       debug!("Task {}: Starting actual processing", id);
       let (new_grouped_msgs, pending_tags_to_remove_chunk, has_processed) =

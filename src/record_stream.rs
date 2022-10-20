@@ -100,8 +100,10 @@ impl KafkaRecordStream {
       }
       result.producer = Some(
         config_ref
-          .set("message.timeout.ms", "6000")
+          .set("message.timeout.ms", "3600000")
           .set("transaction.timeout.ms", "3600000")
+          .set("request.timeout.ms", "900000")
+          .set("socket.timeout.ms", "300000")
           .create_with_context(context)
           .unwrap(),
       );
@@ -116,6 +118,7 @@ impl KafkaRecordStream {
           .set("session.timeout.ms", "21000")
           .set("max.poll.interval.ms", "14400000")
           .set("auto.offset.reset", "smallest")
+          .set("queued.max.messages.kbytes", "300000")
           .create_with_context(context)
           .unwrap(),
       );

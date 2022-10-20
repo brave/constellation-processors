@@ -11,7 +11,7 @@ use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 use tokio::task::JoinHandle;
 
-const DB_WORKERS: usize = 4;
+const DB_WORKERS: usize = 2;
 const INSERT_BATCH_SIZE: usize = 10000;
 
 #[derive(Default, Clone)]
@@ -62,10 +62,18 @@ impl GroupedMessages {
     Ok(())
   }
 
-  pub async fn fetch_pending(&mut self, db_pool: Arc<DBPool>) -> Result<(), AggregatorError> {
+  pub async fn fetch_pending(
+    &mut self,
+    db_pool: Arc<DBPool>,
+    rec_msgs: &mut RecoveredMessages,
+  ) -> Result<(), AggregatorError> {
     for (epoch, epoch_chunks) in self.msg_chunks.iter_mut() {
       let msg_tags_count = epoch_chunks.len();
-      let msg_tags: Vec<Vec<u8>> = epoch_chunks.keys().cloned().collect();
+      let msg_tags: Vec<Vec<u8>> = epoch_chunks
+        .keys()
+        .filter(|tag| rec_msgs.get_mut(*epoch, tag).is_none())
+        .cloned()
+        .collect();
       let pending_fetch_tasks: Vec<JoinHandle<Result<PendingMessageMap, AggregatorError>>> =
         msg_tags
           .chunks(max(msg_tags_count / DB_WORKERS, 1))
@@ -163,6 +171,7 @@ mod tests {
   async fn basic_group_and_pending_storage() {
     dotenv().ok();
     let mut grouped_msgs = GroupedMessages::default();
+    let mut rec_msgs = RecoveredMessages::default();
 
     let fetcher = LocalFetcher::new();
 
@@ -215,7 +224,10 @@ mod tests {
     }
 
     // Should fetch pending messages for new message tags
-    grouped_msgs.fetch_pending(db_pool.clone()).await.unwrap();
+    grouped_msgs
+      .fetch_pending(db_pool.clone(), &mut rec_msgs)
+      .await
+      .unwrap();
 
     let mut epochs: Vec<u8> = grouped_msgs.msg_chunks.keys().map(|v| *v).collect();
     epochs.sort();

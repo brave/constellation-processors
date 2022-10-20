@@ -16,6 +16,7 @@ pub struct RecoveredMessages {
 }
 
 const INSERT_BATCH_SIZE: usize = 5000;
+const FETCH_BATCH_SIZE: usize = 10000;
 
 impl RecoveredMessages {
   pub fn add(&mut self, rec_msg: RecoveredMessage) {
@@ -54,9 +55,12 @@ impl RecoveredMessages {
     epoch: u8,
     msg_tags: Vec<Vec<u8>>,
   ) -> Result<(), AggregatorError> {
-    let recovered_msgs = RecoveredMessage::list(conn, epoch as i16, msg_tags).await?;
-    for rec_msg in recovered_msgs {
-      self.add(rec_msg);
+    for msg_tags in msg_tags.chunks(FETCH_BATCH_SIZE) {
+      let recovered_msgs =
+        RecoveredMessage::list(conn.clone(), epoch as i16, msg_tags.to_vec()).await?;
+      for rec_msg in recovered_msgs {
+        self.add(rec_msg);
+      }
     }
     Ok(())
   }
