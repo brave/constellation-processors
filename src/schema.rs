@@ -1,4 +1,6 @@
-table! {
+// @generated automatically by Diesel CLI.
+
+diesel::table! {
     pending_msgs (id) {
         id -> Int8,
         msg_tag -> Bytea,
@@ -7,7 +9,7 @@ table! {
     }
 }
 
-table! {
+diesel::table! {
     recovered_msgs (id) {
         id -> Int8,
         msg_tag -> Bytea,
@@ -21,4 +23,4 @@ table! {
     }
 }
 
-allow_tables_to_appear_in_same_query!(pending_msgs, recovered_msgs,);
+diesel::allow_tables_to_appear_in_same_query!(pending_msgs, recovered_msgs,);

@@ -166,6 +166,7 @@ async fn gen_msgs_from_data_and_save(csv_path: &str, cli_args: &CliArgs) {
           .await
           .unwrap();
         file_guard.write_all(b"\n").await.unwrap();
+        file_guard.flush().await.unwrap();
       })
     })
     .collect();

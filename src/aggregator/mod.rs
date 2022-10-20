@@ -84,23 +84,22 @@ pub async fn start_aggregation(
     // Split message tags/grouped messages into multiple chunks
     // Process each one in a separate task/thread
     let mut tasks = Vec::new();
-    let mut db_connections = Vec::new();
+
+    let store_conn = Arc::new(Mutex::new(
+      db_pool.get().map_err(|e| PgStoreError::from(e))?,
+    ));
+    let store_conn_lock = store_conn.lock().unwrap();
+    store_conn_lock
+      .transaction_manager()
+      .begin_transaction(store_conn_lock.deref())
+      .map_err(|e| PgStoreError::from(e))?;
+    drop(store_conn_lock);
+
     let grouped_msgs_split = grouped_msgs.split(worker_count).into_iter().enumerate();
     for (id, grouped_msgs) in grouped_msgs_split {
-      let conn = Arc::new(Mutex::new(
-        db_pool.get().map_err(|e| PgStoreError::from(e))?,
-      ));
-      let conn_lock = conn.lock().unwrap();
-      conn_lock
-        .transaction_manager()
-        .begin_transaction(conn_lock.deref())
-        .map_err(|e| PgStoreError::from(e))?;
-      drop(conn_lock);
-
-      db_connections.push(conn.clone());
       tasks.push(start_subtask(
         id,
-        conn,
+        store_conn.clone(),
         db_pool.clone(),
         out_stream.clone(),
         grouped_msgs,
@@ -112,24 +111,24 @@ pub async fn start_aggregation(
 
     let total_measurement_count = measurement_counts.iter().sum::<i64>();
 
-    for conn in db_connections {
-      info!("Committing DB transactions");
-      let conn = conn.lock().unwrap();
-      conn
-        .transaction_manager()
-        .commit_transaction(conn.deref())
-        .map_err(|e| PgStoreError::from(e))?;
-    }
-    info!("Reported {} final measurements", total_measurement_count);
-
     if let Some(out_stream) = out_stream.as_ref() {
       info!("Committing Kafka output transaction");
       out_stream.commit_producer_transaction()?;
     }
 
+    info!("Committing DB transaction");
+    let store_conn_lock = store_conn.lock().unwrap();
+    store_conn_lock
+      .transaction_manager()
+      .commit_transaction(store_conn_lock.deref())
+      .map_err(|e| PgStoreError::from(e))?;
+    drop(store_conn_lock);
+
     // Commit consumption to Kafka cluster, to mark messages as "already read"
     info!("Committing Kafka consumption");
     in_stream.commit_last_consume().await?;
+
+    info!("Reported {} final measurements", total_measurement_count);
   }
 
   // Check for expired epochs. Send off partial measurements.

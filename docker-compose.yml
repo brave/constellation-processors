@@ -21,6 +21,7 @@ services:
       - star-agg
   db:
     image: postgres
+    command: postgres -c 'max_connections=300'
     ports:
       - 5642:5432
     environment:
@@ -47,6 +48,7 @@ services:
       - ALLOW_PLAINTEXT_LISTENER=yes
       - KAFKA_CFG_AUTO_CREATE_TOPICS_ENABLE=true
       - KAFKA_CFG_ADVERTISED_LISTENERS=PLAINTEXT://localhost:9092
+      - KAFKA_CFG_TRANSACTION_MAX_TIMEOUT_MS=3600000
     depends_on:
       - zookeeper
     networks:
