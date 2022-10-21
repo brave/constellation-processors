@@ -26,6 +26,8 @@ pub const K_THRESHOLD_ENV_KEY: &str = "K_THRESHOLD";
 pub const K_THRESHOLD_DEFAULT: &str = "100";
 const COOLOFF_SECONDS: u64 = 15;
 
+const CONSUMER_COUNT: usize = 4;
+
 #[derive(Error, From, Display, Debug)]
 #[display(fmt = "Aggregator error: {}")]
 pub enum AggregatorError {
@@ -76,11 +78,15 @@ pub async fn start_aggregation(
     info!("Starting iteration {}", i);
 
     let mut out_stream = create_output_stream(output_measurements_to_stdout)?;
-    let in_stream = KafkaRecordStream::new(false, true, false);
+
+    let mut in_streams: Vec<RecordStreamArc> = Vec::new();
+    for _ in 0..CONSUMER_COUNT {
+      in_streams.push(Arc::new(KafkaRecordStream::new(false, true, false)));
+    }
 
     info!("Consuming messages from stream");
     // Consume & group as much data from Kafka as possible
-    let (grouped_msgs, count) = consume_and_group(&in_stream, msg_collect_count).await?;
+    let (grouped_msgs, count) = consume_and_group(&in_streams, msg_collect_count).await?;
 
     if count == 0 {
       info!("No messages consumed");
@@ -89,7 +95,6 @@ pub async fn start_aggregation(
     info!("Consumed {} messages", count);
 
     if let Some(out_stream) = out_stream.as_mut() {
-      out_stream.init_producer_transactions()?;
       out_stream.begin_producer_transaction()?;
     }
 
@@ -138,7 +143,9 @@ pub async fn start_aggregation(
 
     // Commit consumption to Kafka cluster, to mark messages as "already read"
     info!("Committing Kafka consumption");
-    in_stream.commit_last_consume().await?;
+    for in_stream in in_streams {
+      in_stream.commit_last_consume().await.unwrap();
+    }
 
     info!("Reported {} final measurements", total_measurement_count);
 
