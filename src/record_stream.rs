@@ -8,7 +8,7 @@ use rdkafka::consumer::{
 use rdkafka::error::{KafkaError, KafkaResult};
 use rdkafka::message::Message;
 use rdkafka::producer::{future_producer::FutureProducer, FutureRecord, Producer};
-use rdkafka::topic_partition_list::{Offset, TopicPartitionList};
+use rdkafka::TopicPartitionList;
 use std::env;
 use std::sync::Arc;
 use std::time::Duration;
@@ -73,7 +73,6 @@ pub type RecordStreamArc = Arc<DynRecordStream>;
 pub struct KafkaRecordStream {
   producer: Option<FutureProducer<KafkaContext>>,
   consumer: Option<StreamConsumer<KafkaContext>>,
-  tpl: Mutex<TopicPartitionList>,
   topic: String,
 }
 
@@ -88,7 +87,6 @@ impl KafkaRecordStream {
     let mut result = Self {
       producer: None,
       consumer: None,
-      tpl: Mutex::new(TopicPartitionList::new()),
       topic: topic.clone(),
     };
     if enable_producer {
@@ -202,20 +200,13 @@ impl RecordStream for KafkaRecordStream {
       msg.partition(),
       msg.offset()
     );
-    let mut tpl = self.tpl.lock().await;
-    tpl.add_partition_offset(
-      msg.topic(),
-      msg.partition(),
-      Offset::Offset(msg.offset() + 1),
-    )?;
     Ok(payload.to_vec())
   }
 
   async fn commit_last_consume(&self) -> Result<(), RecordStreamError> {
     let consumer = self.consumer.as_ref().expect("Kafka consumer not enabled");
-    let tpl = self.tpl.lock().await;
-    trace!("committing = {:?}", tpl);
-    consumer.commit(&tpl, CommitMode::Sync)?;
+    trace!("committing");
+    consumer.commit_consumer_state(CommitMode::Sync)?;
     Ok(())
   }
 }
