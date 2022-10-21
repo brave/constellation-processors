@@ -17,5 +17,7 @@ CREATE TABLE pending_msgs (
 	epoch_tag smallint not null,
 	message bytea not null
 );
+ALTER TABLE pending_msgs ALTER msg_tag SET STORAGE PLAIN;
+ALTER TABLE pending_msgs ALTER message SET STORAGE EXTERNAL;
 CREATE INDEX on pending_msgs (epoch_tag);
 CREATE INDEX on pending_msgs (msg_tag);
