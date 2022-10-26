@@ -5,7 +5,7 @@ mod recovered;
 mod report;
 
 use crate::epoch::get_current_epoch;
-use crate::models::{create_db_pool, PgStoreError};
+use crate::models::{DBPool, PgStoreError};
 use crate::record_stream::{KafkaRecordStream, RecordStream, RecordStreamArc, RecordStreamError};
 use crate::star::AppSTARError;
 use consume::consume_and_group;
@@ -70,7 +70,7 @@ pub async fn start_aggregation(
     usize::from_str(&env::var(K_THRESHOLD_ENV_KEY).unwrap_or(K_THRESHOLD_DEFAULT.to_string()))
       .unwrap_or_else(|_| panic!("{} must be a positive integer", K_THRESHOLD_ENV_KEY));
 
-  let db_pool = Arc::new(create_db_pool(false));
+  let db_pool = Arc::new(DBPool::new(false));
 
   info!("Starting aggregation...");
 
@@ -102,9 +102,7 @@ pub async fn start_aggregation(
     // Process each one in a separate task/thread
     let mut tasks = Vec::new();
 
-    let store_conn = Arc::new(Mutex::new(
-      db_pool.get().map_err(|e| PgStoreError::from(e))?,
-    ));
+    let store_conn = Arc::new(Mutex::new(db_pool.get().await?));
     let store_conn_lock = store_conn.lock().unwrap();
     store_conn_lock
       .transaction_manager()
@@ -158,9 +156,7 @@ pub async fn start_aggregation(
   info!("Checking/processing expired epochs");
   let out_stream = create_output_stream(output_measurements_to_stdout)?;
   process_expired_epochs(
-    Arc::new(Mutex::new(
-      db_pool.get().map_err(|e| PgStoreError::from(e))?,
-    )),
+    Arc::new(Mutex::new(db_pool.get().await?)),
     current_epoch,
     out_stream.as_ref().map(|v| v.as_ref()),
   )
