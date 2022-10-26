@@ -1,8 +1,6 @@
 use super::recovered::RecoveredMessages;
 use super::AggregatorError;
-use crate::models::{
-  BatchInsert, DBConnection, DBPool, NewPendingMessage, PendingMessage, PgStoreError,
-};
+use crate::models::{BatchInsert, DBConnection, DBPool, NewPendingMessage, PendingMessage};
 use crate::star::serialize_message_bincode;
 use futures::future::try_join_all;
 use nested_sta_rs::api::NestedMessage;
@@ -50,9 +48,7 @@ impl GroupedMessages {
     db_pool: Arc<DBPool>,
     rec_msgs: &mut RecoveredMessages,
   ) -> Result<(), AggregatorError> {
-    let conn = Arc::new(Mutex::new(
-      db_pool.get().map_err(|e| PgStoreError::from(e))?,
-    ));
+    let conn = Arc::new(Mutex::new(db_pool.get().await?));
     for (epoch, epoch_chunks) in self.msg_chunks.iter() {
       let msg_tags: Vec<Vec<u8>> = epoch_chunks.keys().cloned().collect();
       rec_msgs
@@ -82,9 +78,7 @@ impl GroupedMessages {
             let tags = tags.to_vec();
             let epoch = *epoch as i16;
             tokio::spawn(async move {
-              let conn = Arc::new(Mutex::new(
-                db_pool.get().map_err(|e| PgStoreError::from(e))?,
-              ));
+              let conn = Arc::new(Mutex::new(db_pool.get().await?));
               let mut pending_msgs = PendingMessageMap::new();
 
               for tag in tags {
@@ -162,7 +156,7 @@ impl GroupedMessages {
 #[cfg(test)]
 mod tests {
   use super::*;
-  use crate::models::{create_db_pool, NewRecoveredMessage};
+  use crate::models::{DBPool, NewRecoveredMessage};
   use crate::star::tests::generate_test_message;
   use dotenv::dotenv;
   use nested_sta_rs::randomness::testing::LocalFetcher;
@@ -194,7 +188,7 @@ mod tests {
 
     let expected_epoch_counts = vec![(0, vec![1, 2]), (1, vec![1, 1]), (2, vec![1]), (3, vec![1])];
 
-    let db_pool = Arc::new(create_db_pool(true));
+    let db_pool = Arc::new(DBPool::new(true));
 
     let expected_epochs = vec![0, 1, 2, 3];
 
@@ -209,7 +203,7 @@ mod tests {
       assert_eq!(&tag_counts, expected_tag_counts);
     }
 
-    let conn = Arc::new(Mutex::new(db_pool.get().unwrap()));
+    let conn = Arc::new(Mutex::new(db_pool.get().await.unwrap()));
     grouped_msgs.store_new_pending_msgs(conn).await.unwrap();
 
     grouped_msgs = GroupedMessages::default();
@@ -326,8 +320,8 @@ mod tests {
       })
       .collect();
 
-    let db_pool = Arc::new(create_db_pool(true));
-    let conn = Arc::new(Mutex::new(db_pool.get().unwrap()));
+    let db_pool = Arc::new(DBPool::new(true));
+    let conn = Arc::new(Mutex::new(db_pool.get().await.unwrap()));
     new_rec_msgs.insert_batch(conn.clone()).await.unwrap();
     drop(conn);
 

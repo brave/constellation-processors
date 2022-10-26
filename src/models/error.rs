@@ -9,4 +9,6 @@ pub enum PgStoreError {
   R2D2(r2d2::Error),
   #[display(fmt = "error joining task result: {}", "_0")]
   Join(JoinError),
+  #[display(fmt = "DB pool timeout")]
+  PoolTimeout,
 }

@@ -99,7 +99,7 @@ impl RecoveredMessages {
 #[cfg(test)]
 mod tests {
   use super::*;
-  use crate::models::create_db_pool;
+  use crate::models::DBPool;
   use dotenv::dotenv;
 
   #[tokio::test]
@@ -162,8 +162,8 @@ mod tests {
     assert!(recovered_msgs.get_mut(4, &vec![53; 20]).is_none());
     assert!(recovered_msgs.get_mut(3, &vec![55; 20]).is_none());
 
-    let db_pool = Arc::new(create_db_pool(true));
-    let conn = Arc::new(Mutex::new(db_pool.get().unwrap()));
+    let db_pool = Arc::new(DBPool::new(true));
+    let conn = Arc::new(Mutex::new(db_pool.get().await.unwrap()));
 
     recovered_msgs.save(conn.clone()).await.unwrap();
     recovered_msgs = RecoveredMessages::default();
@@ -224,8 +224,8 @@ mod tests {
       },
     ];
 
-    let db_pool = Arc::new(create_db_pool(true));
-    let conn = Arc::new(Mutex::new(db_pool.get().unwrap()));
+    let db_pool = Arc::new(DBPool::new(true));
+    let conn = Arc::new(Mutex::new(db_pool.get().await.unwrap()));
 
     new_rec_msgs
       .clone()
