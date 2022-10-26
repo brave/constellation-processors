@@ -18,6 +18,7 @@ pub enum AppSTARError {
   Recovery(NestedSTARError),
 }
 
+#[derive(Debug)]
 pub struct MsgRecoveryInfo {
   pub measurement: (String, String),
   pub next_layer_messages: Option<Vec<NestedMessage>>,

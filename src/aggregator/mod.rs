@@ -15,7 +15,7 @@ use consume::consume_and_group;
 use derive_more::{Display, Error, From};
 use futures::future::try_join_all;
 use nested_sta_rs::errors::NestedSTARError;
-use processing::{process_expired_epochs, start_subtask};
+use processing::{process_expired_epochs, process_task};
 use std::env;
 use std::str::{FromStr, Utf8Error};
 use std::sync::{Arc, Mutex};
@@ -125,7 +125,7 @@ pub async fn start_aggregation(
 
     let grouped_msgs_split = grouped_msgs.split(worker_count).into_iter().enumerate();
     for (id, grouped_msgs) in grouped_msgs_split {
-      tasks.push(start_subtask(
+      tasks.push(process_task(
         id,
         store_conns.clone(),
         db_pool.clone(),
