@@ -15,6 +15,8 @@ use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 use tokio::time::sleep;
 
+use crate::profiler::Profiler;
+
 const DATABASE_URL_ENV_KEY: &str = "DATABASE_URL";
 const TEST_DATABASE_URL_ENV_KEY: &str = "TEST_DATABASE_URL";
 const MAX_CONN_ENV_KEY: &str = "DATABASE_MAX_CONN";
@@ -73,7 +75,11 @@ impl DBPool {
 
 #[async_trait]
 pub trait BatchInsert<T> {
-  async fn insert_batch(self, conn: Arc<Mutex<DBConnection>>) -> Result<(), PgStoreError>;
+  async fn insert_batch(
+    self,
+    conn: Arc<Mutex<DBConnection>>,
+    profiler: Arc<Profiler>,
+  ) -> Result<(), PgStoreError>;
 }
 
 #[derive(Debug)]

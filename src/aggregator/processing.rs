@@ -4,10 +4,12 @@ use super::report::report_measurements;
 use super::AggregatorError;
 use crate::epoch::is_epoch_expired;
 use crate::models::{DBConnection, DBPool, PendingMessage, RecoveredMessage};
+use crate::profiler::{Profiler, ProfilerStat};
 use crate::record_stream::{DynRecordStream, RecordStreamArc};
 use crate::star::{parse_message, recover_key, recover_msgs, AppSTARError, MsgRecoveryInfo};
 use nested_sta_rs::errors::NestedSTARError;
 use std::sync::{Arc, Mutex};
+use std::time::Instant;
 use tokio::task::JoinHandle;
 
 pub async fn process_expired_epochs(
@@ -131,11 +133,14 @@ pub fn start_subtask(
   out_stream: Option<RecordStreamArc>,
   mut grouped_msgs: GroupedMessages,
   k_threshold: usize,
+  profiler: Arc<Profiler>,
 ) -> JoinHandle<i64> {
   tokio::spawn(async move {
     let mut pending_tags_to_remove = Vec::new();
 
     let mut rec_msgs = RecoveredMessages::default();
+
+    let processing_start_instant = Instant::now();
 
     let mut it_count = 1;
     loop {
@@ -146,14 +151,14 @@ pub fn start_subtask(
       // Fetch recovered message info (which includes key) for collected tags, if available
       debug!("Task {}: Fetching recovered messages", id);
       grouped_msgs
-        .fetch_recovered(db_pool.clone(), &mut rec_msgs)
+        .fetch_recovered(db_pool.clone(), &mut rec_msgs, profiler.clone())
         .await
         .unwrap();
 
       // Fetch pending messages for collected tags, if available
       debug!("Task {}: Fetching pending messages", id);
       grouped_msgs
-        .fetch_pending(db_pool.clone(), &mut rec_msgs)
+        .fetch_pending(db_pool.clone(), &mut rec_msgs, profiler.clone())
         .await
         .unwrap();
 
@@ -165,7 +170,7 @@ pub fn start_subtask(
 
       debug!("Task {}: Storing new pending messages", id);
       grouped_msgs
-        .store_new_pending_msgs(store_conn.clone())
+        .store_new_pending_msgs(store_conn.clone(), profiler.clone())
         .await
         .unwrap();
 
@@ -179,7 +184,7 @@ pub fn start_subtask(
 
     info!("Task {}: Deleting old pending messages", id);
     for (epoch, msg_tag) in pending_tags_to_remove {
-      PendingMessage::delete_tag(store_conn.clone(), epoch as i16, msg_tag)
+      PendingMessage::delete_tag(store_conn.clone(), epoch as i16, msg_tag, profiler.clone())
         .await
         .unwrap();
     }
@@ -201,7 +206,12 @@ pub fn start_subtask(
     }
 
     info!("Task {}: Saving recovered messages", id);
-    rec_msgs.save(store_conn).await.unwrap();
+    rec_msgs.save(store_conn, profiler.clone()).await.unwrap();
+
+    profiler
+      .record_range_time(ProfilerStat::TaskProcessingTime, processing_start_instant)
+      .await;
+
     measurements_count
   })
 }

@@ -1,5 +1,6 @@
 use super::AggregatorError;
 use crate::models::{BatchInsert, DBConnection, NewRecoveredMessage, RecoveredMessage};
+use crate::profiler::Profiler;
 use std::collections::{HashMap, HashSet};
 use std::sync::{Arc, Mutex};
 
@@ -54,10 +55,16 @@ impl RecoveredMessages {
     conn: Arc<Mutex<DBConnection>>,
     epoch: u8,
     msg_tags: Vec<Vec<u8>>,
+    profiler: Arc<Profiler>,
   ) -> Result<(), AggregatorError> {
     for msg_tags in msg_tags.chunks(FETCH_BATCH_SIZE) {
-      let recovered_msgs =
-        RecoveredMessage::list(conn.clone(), epoch as i16, msg_tags.to_vec()).await?;
+      let recovered_msgs = RecoveredMessage::list(
+        conn.clone(),
+        epoch as i16,
+        msg_tags.to_vec(),
+        profiler.clone(),
+      )
+      .await?;
       for rec_msg in recovered_msgs {
         self.add(rec_msg);
       }
@@ -77,20 +84,27 @@ impl RecoveredMessages {
     Ok(())
   }
 
-  pub async fn save(self, conn: Arc<Mutex<DBConnection>>) -> Result<(), AggregatorError> {
+  pub async fn save(
+    self,
+    conn: Arc<Mutex<DBConnection>>,
+    profiler: Arc<Profiler>,
+  ) -> Result<(), AggregatorError> {
     let mut new_msgs = Vec::new();
     for (_, epoch_map) in self.map {
       for (_, rec_msg) in epoch_map {
         if rec_msg.id == 0 {
           new_msgs.push(NewRecoveredMessage::from(rec_msg));
         } else {
-          RecoveredMessage::update_count(conn.clone(), rec_msg.id, rec_msg.count).await?;
+          RecoveredMessage::update_count(conn.clone(), rec_msg.id, rec_msg.count, profiler.clone())
+            .await?;
         }
       }
     }
     for new_msgs in new_msgs.chunks(INSERT_BATCH_SIZE) {
       let new_msgs = new_msgs.to_vec();
-      new_msgs.insert_batch(conn.clone()).await?;
+      new_msgs
+        .insert_batch(conn.clone(), profiler.clone())
+        .await?;
     }
     Ok(())
   }
@@ -106,6 +120,7 @@ mod tests {
   async fn add_and_save() {
     dotenv().ok();
     let mut recovered_msgs = RecoveredMessages::default();
+    let profiler = Arc::new(Profiler::default());
 
     let new_rec_msgs = vec![
       RecoveredMessage {
@@ -165,7 +180,10 @@ mod tests {
     let db_pool = Arc::new(DBPool::new(true));
     let conn = Arc::new(Mutex::new(db_pool.get().await.unwrap()));
 
-    recovered_msgs.save(conn.clone()).await.unwrap();
+    recovered_msgs
+      .save(conn.clone(), profiler.clone())
+      .await
+      .unwrap();
     recovered_msgs = RecoveredMessages::default();
     for epoch in 0..6 {
       let tags = vec![
@@ -176,7 +194,7 @@ mod tests {
         vec![55u8; 20],
       ];
       recovered_msgs
-        .fetch_recovered(conn.clone(), epoch, tags)
+        .fetch_recovered(conn.clone(), epoch, tags, profiler.clone())
         .await
         .unwrap();
     }
@@ -200,6 +218,7 @@ mod tests {
   #[tokio::test]
   async fn update_and_save() {
     dotenv().ok();
+    let profiler = Arc::new(Profiler::default());
 
     let new_rec_msgs = vec![
       NewRecoveredMessage {
@@ -229,28 +248,33 @@ mod tests {
 
     new_rec_msgs
       .clone()
-      .insert_batch(conn.clone())
+      .insert_batch(conn.clone(), profiler.clone())
       .await
       .unwrap();
 
     let mut recovered_msgs = RecoveredMessages::default();
 
     for epoch in 3..=4 {
-      let mut rec_msg = RecoveredMessage::list(conn.clone(), epoch, vec![vec![60; 20]])
-        .await
-        .unwrap()[0]
-        .clone();
+      let mut rec_msg =
+        RecoveredMessage::list(conn.clone(), epoch, vec![vec![60; 20]], profiler.clone())
+          .await
+          .unwrap()[0]
+          .clone();
       rec_msg.count += 5;
       recovered_msgs.add(rec_msg);
     }
 
-    recovered_msgs.save(conn.clone()).await.unwrap();
+    recovered_msgs
+      .save(conn.clone(), profiler.clone())
+      .await
+      .unwrap();
 
     for epoch in 3..=4 {
-      let rec_msg = RecoveredMessage::list(conn.clone(), epoch, vec![vec![60; 20]])
-        .await
-        .unwrap()[0]
-        .clone();
+      let rec_msg =
+        RecoveredMessage::list(conn.clone(), epoch, vec![vec![60; 20]], profiler.clone())
+          .await
+          .unwrap()[0]
+          .clone();
       assert_eq!(rec_msg.count, rec_msg.key[0] as i64 + 5);
     }
   }

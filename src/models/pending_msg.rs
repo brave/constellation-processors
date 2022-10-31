@@ -1,10 +1,12 @@
 use super::{BatchInsert, DBConnection};
 use crate::models::PgStoreError;
+use crate::profiler::{Profiler, ProfilerStat};
 use crate::schema::pending_msgs;
 use async_trait::async_trait;
 use diesel::{ExpressionMethods, QueryDsl, RunQueryDsl};
 use std::ops::Deref;
 use std::sync::{Arc, Mutex};
+use std::time::Instant;
 use tokio::task;
 
 #[derive(Queryable, Debug, Clone)]
@@ -28,8 +30,10 @@ impl PendingMessage {
     conn: Arc<Mutex<DBConnection>>,
     filter_epoch_tag: i16,
     filter_msg_tag: Vec<u8>,
+    profiler: Arc<Profiler>,
   ) -> Result<Vec<Self>, PgStoreError> {
-    task::spawn_blocking(move || {
+    let start_instant = Instant::now();
+    let result = task::spawn_blocking(move || {
       use crate::schema::pending_msgs::dsl::*;
       let conn = conn.lock().unwrap();
       Ok(
@@ -39,7 +43,11 @@ impl PendingMessage {
           .load(conn.deref())?,
       )
     })
-    .await?
+    .await?;
+    profiler
+      .record_range_time(ProfilerStat::PendingMsgGet, start_instant)
+      .await;
+    result
   }
 
   pub async fn delete_epoch(
@@ -59,8 +67,10 @@ impl PendingMessage {
     conn: Arc<Mutex<DBConnection>>,
     filter_epoch_tag: i16,
     filter_msg_tag: Vec<u8>,
+    profiler: Arc<Profiler>,
   ) -> Result<(), PgStoreError> {
-    task::spawn_blocking(move || {
+    let start_instant = Instant::now();
+    let result = task::spawn_blocking(move || {
       use crate::schema::pending_msgs::dsl::*;
       let conn = conn.lock().unwrap();
       diesel::delete(
@@ -71,20 +81,33 @@ impl PendingMessage {
       .execute(conn.deref())?;
       Ok(())
     })
-    .await?
+    .await?;
+    profiler
+      .record_range_time(ProfilerStat::PendingMsgDelete, start_instant)
+      .await;
+    result
   }
 }
 
 #[async_trait]
 impl BatchInsert<NewPendingMessage> for Vec<NewPendingMessage> {
-  async fn insert_batch(self, conn: Arc<Mutex<DBConnection>>) -> Result<(), PgStoreError> {
-    task::spawn_blocking(move || {
+  async fn insert_batch(
+    self,
+    conn: Arc<Mutex<DBConnection>>,
+    profiler: Arc<Profiler>,
+  ) -> Result<(), PgStoreError> {
+    let start_instant = Instant::now();
+    let result = task::spawn_blocking(move || {
       let conn = conn.lock().unwrap();
       diesel::insert_into(pending_msgs::table)
         .values(self)
         .execute(conn.deref())?;
       Ok(())
     })
-    .await?
+    .await?;
+    profiler
+      .record_range_time(ProfilerStat::PendingMsgInsert, start_instant)
+      .await;
+    result
   }
 }

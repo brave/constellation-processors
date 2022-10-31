@@ -1,6 +1,7 @@
 use super::recovered::RecoveredMessages;
 use super::AggregatorError;
 use crate::models::{BatchInsert, DBConnection, DBPool, NewPendingMessage, PendingMessage};
+use crate::profiler::Profiler;
 use crate::star::serialize_message_bincode;
 use futures::future::try_join_all;
 use nested_sta_rs::api::NestedMessage;
@@ -47,12 +48,13 @@ impl GroupedMessages {
     &mut self,
     db_pool: Arc<DBPool>,
     rec_msgs: &mut RecoveredMessages,
+    profiler: Arc<Profiler>,
   ) -> Result<(), AggregatorError> {
     let conn = Arc::new(Mutex::new(db_pool.get().await?));
     for (epoch, epoch_chunks) in self.msg_chunks.iter() {
       let msg_tags: Vec<Vec<u8>> = epoch_chunks.keys().cloned().collect();
       rec_msgs
-        .fetch_recovered(conn.clone(), *epoch, msg_tags)
+        .fetch_recovered(conn.clone(), *epoch, msg_tags, profiler.clone())
         .await?;
     }
     Ok(())
@@ -62,6 +64,7 @@ impl GroupedMessages {
     &mut self,
     db_pool: Arc<DBPool>,
     rec_msgs: &mut RecoveredMessages,
+    profiler: Arc<Profiler>,
   ) -> Result<(), AggregatorError> {
     for (epoch, epoch_chunks) in self.msg_chunks.iter_mut() {
       let msg_tags_count = epoch_chunks.len();
@@ -77,12 +80,14 @@ impl GroupedMessages {
             let db_pool = db_pool.clone();
             let tags = tags.to_vec();
             let epoch = *epoch as i16;
+            let profiler = profiler.clone();
             tokio::spawn(async move {
               let conn = Arc::new(Mutex::new(db_pool.get().await?));
               let mut pending_msgs = PendingMessageMap::new();
 
               for tag in tags {
-                let msgs = PendingMessage::list(conn.clone(), epoch, tag.clone()).await?;
+                let msgs =
+                  PendingMessage::list(conn.clone(), epoch, tag.clone(), profiler.clone()).await?;
                 pending_msgs.insert(tag, msgs);
               }
               Ok(pending_msgs)
@@ -104,6 +109,7 @@ impl GroupedMessages {
   pub async fn store_new_pending_msgs(
     self,
     conn: Arc<Mutex<DBConnection>>,
+    profiler: Arc<Profiler>,
   ) -> Result<(), AggregatorError> {
     for (epoch, mut epoch_chunks) in self.msg_chunks {
       for chunk in epoch_chunks.values_mut() {
@@ -125,7 +131,9 @@ impl GroupedMessages {
       if !new_pending_msgs.is_empty() {
         for new_msgs in new_pending_msgs.chunks(INSERT_BATCH_SIZE) {
           let new_msgs = new_msgs.to_vec();
-          new_msgs.insert_batch(conn.clone()).await?;
+          new_msgs
+            .insert_batch(conn.clone(), profiler.clone())
+            .await?;
         }
       }
     }
@@ -166,6 +174,7 @@ mod tests {
     dotenv().ok();
     let mut grouped_msgs = GroupedMessages::default();
     let mut rec_msgs = RecoveredMessages::default();
+    let profiler = Arc::new(Profiler::default());
 
     let fetcher = LocalFetcher::new();
 
@@ -204,7 +213,10 @@ mod tests {
     }
 
     let conn = Arc::new(Mutex::new(db_pool.get().await.unwrap()));
-    grouped_msgs.store_new_pending_msgs(conn).await.unwrap();
+    grouped_msgs
+      .store_new_pending_msgs(conn, profiler.clone())
+      .await
+      .unwrap();
 
     grouped_msgs = GroupedMessages::default();
 
@@ -219,7 +231,7 @@ mod tests {
 
     // Should fetch pending messages for new message tags
     grouped_msgs
-      .fetch_pending(db_pool.clone(), &mut rec_msgs)
+      .fetch_pending(db_pool.clone(), &mut rec_msgs, profiler.clone())
       .await
       .unwrap();
 
@@ -290,6 +302,7 @@ mod tests {
     dotenv().ok();
     let mut grouped_msgs = GroupedMessages::default();
     let fetcher = LocalFetcher::new();
+    let profiler = Arc::new(Profiler::default());
 
     let msg_infos = vec![(0, "a|1"), (1, "a|1"), (2, "a|2")];
 
@@ -322,13 +335,16 @@ mod tests {
 
     let db_pool = Arc::new(DBPool::new(true));
     let conn = Arc::new(Mutex::new(db_pool.get().await.unwrap()));
-    new_rec_msgs.insert_batch(conn.clone()).await.unwrap();
+    new_rec_msgs
+      .insert_batch(conn.clone(), profiler.clone())
+      .await
+      .unwrap();
     drop(conn);
 
     let mut recovered_msgs = RecoveredMessages::default();
 
     grouped_msgs
-      .fetch_recovered(db_pool, &mut recovered_msgs)
+      .fetch_recovered(db_pool, &mut recovered_msgs, profiler.clone())
       .await
       .unwrap();
 

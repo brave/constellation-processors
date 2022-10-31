@@ -1,10 +1,12 @@
 use super::{BatchInsert, DBConnection};
 use crate::models::PgStoreError;
+use crate::profiler::{Profiler, ProfilerStat};
 use crate::schema::recovered_msgs;
 use async_trait::async_trait;
 use diesel::{ExpressionMethods, QueryDsl, RunQueryDsl};
 use std::ops::Deref;
 use std::sync::{Arc, Mutex};
+use std::time::Instant;
 use tokio::task;
 
 #[derive(Queryable, Clone)]
@@ -53,8 +55,10 @@ impl RecoveredMessage {
     conn: Arc<Mutex<DBConnection>>,
     filter_epoch_tag: i16,
     filter_msg_tags: Vec<Vec<u8>>,
+    profiler: Arc<Profiler>,
   ) -> Result<Vec<RecoveredMessage>, PgStoreError> {
-    task::spawn_blocking(move || {
+    let start_instant = Instant::now();
+    let result = task::spawn_blocking(move || {
       use crate::schema::recovered_msgs::dsl::*;
 
       let conn = conn.lock().unwrap();
@@ -65,15 +69,21 @@ impl RecoveredMessage {
           .load(conn.deref())?,
       )
     })
-    .await?
+    .await?;
+    profiler
+      .record_range_time(ProfilerStat::RecoveredMsgGet, start_instant)
+      .await;
+    result
   }
 
   pub async fn update_count(
     conn: Arc<Mutex<DBConnection>>,
     curr_id: i64,
     new_count: i64,
+    profiler: Arc<Profiler>,
   ) -> Result<(), PgStoreError> {
-    task::spawn_blocking(move || {
+    let start_instant = Instant::now();
+    let result = task::spawn_blocking(move || {
       use crate::schema::recovered_msgs::dsl::*;
 
       let conn = conn.lock().unwrap();
@@ -83,7 +93,11 @@ impl RecoveredMessage {
 
       Ok(())
     })
-    .await?
+    .await?;
+    profiler
+      .record_range_time(ProfilerStat::RecoveredMsgUpdate, start_instant)
+      .await;
+    result
   }
 
   pub async fn list_with_nonzero_count(
@@ -139,14 +153,23 @@ impl RecoveredMessage {
 
 #[async_trait]
 impl BatchInsert<NewRecoveredMessage> for Vec<NewRecoveredMessage> {
-  async fn insert_batch(self, conn: Arc<Mutex<DBConnection>>) -> Result<(), PgStoreError> {
-    task::spawn_blocking(move || {
+  async fn insert_batch(
+    self,
+    conn: Arc<Mutex<DBConnection>>,
+    profiler: Arc<Profiler>,
+  ) -> Result<(), PgStoreError> {
+    let start_instant = Instant::now();
+    let result = task::spawn_blocking(move || {
       let conn = conn.lock().unwrap();
       diesel::insert_into(recovered_msgs::table)
         .values(self)
         .execute(conn.deref())?;
       Ok(())
     })
-    .await?
+    .await?;
+    profiler
+      .record_range_time(ProfilerStat::RecoveredMsgInsert, start_instant)
+      .await;
+    result
   }
 }

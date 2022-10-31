@@ -6,6 +6,7 @@ mod report;
 
 use crate::epoch::get_current_epoch;
 use crate::models::{DBPool, PgStoreError};
+use crate::profiler::{Profiler, ProfilerStat};
 use crate::record_stream::{KafkaRecordStream, RecordStream, RecordStreamArc, RecordStreamError};
 use crate::star::AppSTARError;
 use consume::consume_and_group;
@@ -18,7 +19,7 @@ use std::env;
 use std::ops::Deref;
 use std::str::{FromStr, Utf8Error};
 use std::sync::{Arc, Mutex};
-use std::time::Duration;
+use std::time::{Duration, Instant};
 use tokio::task::JoinError;
 use tokio::time::sleep;
 
@@ -75,6 +76,8 @@ pub async fn start_aggregation(
   info!("Starting aggregation...");
 
   for i in 0..iterations {
+    let profiler = Arc::new(Profiler::default());
+
     info!("Starting iteration {}", i);
 
     let mut out_stream = create_output_stream(output_measurements_to_stdout)?;
@@ -85,6 +88,7 @@ pub async fn start_aggregation(
     }
 
     info!("Consuming messages from stream");
+    let download_start_instant = Instant::now();
     // Consume & group as much data from Kafka as possible
     let (grouped_msgs, count) = consume_and_group(&in_streams, msg_collect_count).await?;
 
@@ -93,6 +97,9 @@ pub async fn start_aggregation(
       break;
     }
     info!("Consumed {} messages", count);
+    profiler
+      .record_total_time(ProfilerStat::DownloadTime, download_start_instant)
+      .await;
 
     if let Some(out_stream) = out_stream.as_mut() {
       out_stream.begin_producer_transaction()?;
@@ -101,6 +108,8 @@ pub async fn start_aggregation(
     // Split message tags/grouped messages into multiple chunks
     // Process each one in a separate task/thread
     let mut tasks = Vec::new();
+
+    let processing_start_instant = Instant::now();
 
     let store_conn = Arc::new(Mutex::new(db_pool.get().await?));
     let store_conn_lock = store_conn.lock().unwrap();
@@ -119,6 +128,7 @@ pub async fn start_aggregation(
         out_stream.clone(),
         grouped_msgs,
         k_threshold,
+        profiler.clone(),
       ));
     }
 
@@ -145,7 +155,13 @@ pub async fn start_aggregation(
       in_stream.commit_last_consume().await.unwrap();
     }
 
+    profiler
+      .record_total_time(ProfilerStat::TotalProcessingTime, processing_start_instant)
+      .await;
+
     info!("Reported {} final measurements", total_measurement_count);
+
+    info!("Profiler summary:\n{}", profiler.summary().await);
 
     info!("Cooling off for {} seconds", COOLOFF_SECONDS);
     sleep(Duration::from_secs(COOLOFF_SECONDS)).await;
