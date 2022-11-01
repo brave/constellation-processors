@@ -6,42 +6,23 @@ use futures::future::try_join_all;
 use nested_sta_rs::api::NestedMessage;
 use std::sync::Arc;
 use std::time::Duration;
-use tokio::sync::{mpsc, Mutex};
+use tokio::sync::mpsc::{self, UnboundedSender};
+use tokio::sync::Mutex;
 use tokio::task::JoinHandle;
 use tokio::time::sleep;
 
 const RECV_TIMEOUT_MS: u64 = 2500;
 
-pub async fn consume_and_group(
+fn create_recv_tasks(
   rec_streams: &Vec<RecordStreamArc>,
-  msg_collect_count: usize,
-) -> Result<(GroupedMessages, usize), AggregatorError> {
-  let msg_count = Arc::new(Mutex::new(0));
-  let mut grouped_msgs = GroupedMessages::default();
-
-  let (parsed_tx, mut parsed_rx) = mpsc::unbounded_channel::<NestedMessage>();
-
-  let parsing_tasks = rec_streams
-    .iter()
-    .map(|_| {
-      let parsed_tx = parsed_tx.clone();
-      let (raw_tx, mut raw_rx) = mpsc::unbounded_channel::<Vec<u8>>();
-      let task = tokio::spawn(async move {
-        while let Some(msg) = raw_rx.recv().await {
-          parsed_tx.send(parse_message(&msg)?).unwrap();
-        }
-        info!("Parsing task finished");
-        Ok(())
-      });
-      (raw_tx, task)
-    })
-    .collect::<Vec<(
-      mpsc::UnboundedSender<Vec<u8>>,
-      JoinHandle<Result<(), AggregatorError>>,
-    )>>();
-  drop(parsed_tx);
-
-  let mut task_handles = parsing_tasks
+  parsing_tasks: &Vec<(
+    mpsc::UnboundedSender<Vec<u8>>,
+    JoinHandle<Result<(), AggregatorError>>,
+  )>,
+  msg_count: Arc<Mutex<usize>>,
+  msgs_to_collect_count: usize,
+) -> Vec<JoinHandle<Result<(), AggregatorError>>> {
+  parsing_tasks
     .iter()
     .zip(rec_streams.iter().cloned().into_iter())
     .map(|((raw_tx, _), rec_stream)| {
@@ -55,28 +36,65 @@ pub async fn consume_and_group(
 
               let mut msg_count = msg_count.lock().await;
               *msg_count += 1;
-              if *msg_count >= msg_collect_count {
+              if *msg_count >= msgs_to_collect_count {
                 break;
               }
               drop(msg_count);
             },
             _ = sleep(Duration::from_millis(RECV_TIMEOUT_MS)) => {
               break;
-            }
+            },
           }
         }
         info!("Kafka consume task finished");
         Ok(())
       })
     })
-    .collect::<Vec<JoinHandle<Result<(), AggregatorError>>>>();
+    .collect()
+}
 
-  task_handles.extend(
-    parsing_tasks
-      .into_iter()
-      .map(|(_, handle)| handle)
-      .collect::<Vec<JoinHandle<Result<(), AggregatorError>>>>(),
+fn create_parsing_tasks(
+  task_count: usize,
+  parsed_tx: UnboundedSender<NestedMessage>,
+) -> Vec<(
+  mpsc::UnboundedSender<Vec<u8>>,
+  JoinHandle<Result<(), AggregatorError>>,
+)> {
+  (0..task_count)
+    .map(|_| {
+      let parsed_tx = parsed_tx.clone();
+      let (raw_tx, mut raw_rx) = mpsc::unbounded_channel::<Vec<u8>>();
+      let task = tokio::spawn(async move {
+        while let Some(msg) = raw_rx.recv().await {
+          parsed_tx.send(parse_message(&msg)?).unwrap();
+        }
+        info!("Parsing task finished");
+        Ok(())
+      });
+      (raw_tx, task)
+    })
+    .collect()
+}
+
+pub async fn consume_and_group(
+  rec_streams: &Vec<RecordStreamArc>,
+  msgs_to_collect_count: usize,
+) -> Result<(GroupedMessages, usize), AggregatorError> {
+  let mut grouped_msgs = GroupedMessages::default();
+
+  let (parsed_tx, mut parsed_rx) = mpsc::unbounded_channel::<NestedMessage>();
+  let msg_count = Arc::new(Mutex::new(0));
+
+  let parsing_tasks = create_parsing_tasks(rec_streams.len(), parsed_tx);
+  let recv_tasks = create_recv_tasks(
+    rec_streams,
+    &parsing_tasks,
+    msg_count.clone(),
+    msgs_to_collect_count,
   );
+
+  let mut task_handles = recv_tasks;
+  task_handles.extend(parsing_tasks.into_iter().map(|(_, handle)| handle));
 
   while let Some(parsed_msg) = parsed_rx.recv().await {
     grouped_msgs.add(parsed_msg, None);
@@ -91,7 +109,6 @@ pub async fn consume_and_group(
   info!("Messages grouped");
 
   let msg_count = *msg_count.lock().await;
-
   Ok((grouped_msgs, msg_count))
 }
 

@@ -8,6 +8,7 @@ use rdkafka::consumer::{
 use rdkafka::error::{KafkaError, KafkaResult};
 use rdkafka::message::Message;
 use rdkafka::producer::{future_producer::FutureProducer, FutureRecord, Producer};
+use rdkafka::types::RDKafkaErrorCode;
 use rdkafka::TopicPartitionList;
 use std::env;
 use std::sync::Arc;
@@ -206,8 +207,17 @@ impl RecordStream for KafkaRecordStream {
   async fn commit_last_consume(&self) -> Result<(), RecordStreamError> {
     let consumer = self.consumer.as_ref().expect("Kafka consumer not enabled");
     trace!("committing");
-    consumer.commit_consumer_state(CommitMode::Sync)?;
-    Ok(())
+    if let Err(e) = consumer.commit_consumer_state(CommitMode::Sync) {
+      if let Some(e_code) = e.rdkafka_error_code() {
+        if e_code == RDKafkaErrorCode::NoOffset {
+          // No messages were consumed in this case; we can ignore this error
+          return Ok(());
+        }
+      }
+      Err(RecordStreamError::from(e))
+    } else {
+      Ok(())
+    }
   }
 }
 
