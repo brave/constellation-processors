@@ -103,19 +103,24 @@ impl RecoveredMessage {
   pub async fn list_with_nonzero_count(
     conn: Arc<Mutex<DBConnection>>,
     filter_epoch_tag: i16,
+    profiler: Arc<Profiler>,
   ) -> Result<Vec<Self>, PgStoreError> {
-    task::spawn_blocking(move || {
+    let start_instant = Instant::now();
+    let result = task::spawn_blocking(move || {
       use crate::schema::recovered_msgs::dsl::*;
 
       let conn = conn.lock().unwrap();
-      Ok(
-        recovered_msgs
-          .filter(epoch_tag.eq(filter_epoch_tag))
-          .filter(count.gt(0))
-          .load(conn.deref())?,
-      )
+      let result = recovered_msgs
+        .filter(epoch_tag.eq(filter_epoch_tag))
+        .filter(count.gt(0))
+        .load(conn.deref())?;
+      Ok(result)
     })
-    .await?
+    .await?;
+    profiler
+      .record_range_time(ProfilerStat::RecoveredMsgGet, start_instant)
+      .await;
+    result
   }
 
   pub async fn list_distinct_epochs(
@@ -138,8 +143,10 @@ impl RecoveredMessage {
   pub async fn delete_epoch(
     conn: Arc<Mutex<DBConnection>>,
     filter_epoch_tag: i16,
+    profiler: Arc<Profiler>,
   ) -> Result<(), PgStoreError> {
-    task::spawn_blocking(move || {
+    let start_instant = Instant::now();
+    let result = task::spawn_blocking(move || {
       use crate::schema::recovered_msgs::dsl::*;
 
       let conn = conn.lock().unwrap();
@@ -147,7 +154,11 @@ impl RecoveredMessage {
         .execute(conn.deref())?;
       Ok(())
     })
-    .await?
+    .await?;
+    profiler
+      .record_range_time(ProfilerStat::RecoveredMsgDelete, start_instant)
+      .await;
+    result
   }
 }
 

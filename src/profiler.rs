@@ -38,7 +38,9 @@ pub enum ProfilerStat {
   RecoveredMsgGet,
   RecoveredMsgUpdate,
   RecoveredMsgInsert,
+  RecoveredMsgDelete,
   TagsPerTask,
+  OutStreamProduceTime,
 }
 
 #[derive(Default)]

@@ -16,6 +16,7 @@ pub async fn process_expired_epochs(
   conn: Arc<Mutex<DBConnection>>,
   current_epoch: u8,
   out_stream: Option<&DynRecordStream>,
+  profiler: Arc<Profiler>,
 ) -> Result<(), AggregatorError> {
   let epochs = RecoveredMessage::list_distinct_epochs(conn.clone()).await?;
   for epoch in epochs {
@@ -25,12 +26,19 @@ pub async fn process_expired_epochs(
     info!("Detected expired epoch '{}', processing...", epoch);
     let mut rec_msgs = RecoveredMessages::default();
     rec_msgs
-      .fetch_all_recovered_with_nonzero_count(conn.clone(), epoch as u8)
+      .fetch_all_recovered_with_nonzero_count(conn.clone(), epoch as u8, profiler.clone())
       .await?;
 
-    report_measurements(&mut rec_msgs, epoch as u8, true, out_stream).await?;
-    RecoveredMessage::delete_epoch(conn.clone(), epoch).await?;
-    PendingMessage::delete_epoch(conn.clone(), epoch).await?;
+    report_measurements(
+      &mut rec_msgs,
+      epoch as u8,
+      true,
+      out_stream,
+      profiler.clone(),
+    )
+    .await?;
+    RecoveredMessage::delete_epoch(conn.clone(), epoch, profiler.clone()).await?;
+    PendingMessage::delete_epoch(conn.clone(), epoch, profiler.clone()).await?;
   }
   Ok(())
 }
@@ -200,6 +208,7 @@ pub fn start_subtask(
         epoch,
         false,
         out_stream.as_ref().map(|v| v.as_ref()),
+        profiler.clone(),
       )
       .await
       .unwrap();

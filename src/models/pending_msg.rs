@@ -53,14 +53,20 @@ impl PendingMessage {
   pub async fn delete_epoch(
     conn: Arc<Mutex<DBConnection>>,
     filter_epoch_tag: i16,
+    profiler: Arc<Profiler>,
   ) -> Result<(), PgStoreError> {
-    task::spawn_blocking(move || {
+    let start_instant = Instant::now();
+    let result = task::spawn_blocking(move || {
       use crate::schema::pending_msgs::dsl::*;
       let conn = conn.lock().unwrap();
       diesel::delete(pending_msgs.filter(epoch_tag.eq(filter_epoch_tag))).execute(conn.deref())?;
       Ok(())
     })
-    .await?
+    .await?;
+    profiler
+      .record_range_time(ProfilerStat::PendingMsgDelete, start_instant)
+      .await;
+    result
   }
 
   pub async fn delete_tag(

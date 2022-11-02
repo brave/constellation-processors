@@ -76,8 +76,10 @@ impl RecoveredMessages {
     &mut self,
     conn: Arc<Mutex<DBConnection>>,
     epoch: u8,
+    profiler: Arc<Profiler>,
   ) -> Result<(), AggregatorError> {
-    let recovered_msgs = RecoveredMessage::list_with_nonzero_count(conn, epoch as i16).await?;
+    let recovered_msgs =
+      RecoveredMessage::list_with_nonzero_count(conn, epoch as i16, profiler).await?;
     for rec_msg in recovered_msgs {
       self.add(rec_msg);
     }

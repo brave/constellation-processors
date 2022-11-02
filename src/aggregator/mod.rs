@@ -170,13 +170,16 @@ pub async fn start_aggregation(
   // Check for expired epochs. Send off partial measurements.
   // Delete pending/recovered messages from DB.
   info!("Checking/processing expired epochs");
+  let profiler = Arc::new(Profiler::default());
   let out_stream = create_output_stream(output_measurements_to_stdout)?;
   process_expired_epochs(
     Arc::new(Mutex::new(db_pool.get().await?)),
     current_epoch,
     out_stream.as_ref().map(|v| v.as_ref()),
+    profiler.clone(),
   )
   .await?;
+  info!("Profiler summary:\n{}", profiler.summary().await);
 
   info!("Finished aggregation");
   Ok(())

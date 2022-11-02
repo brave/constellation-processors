@@ -1,9 +1,12 @@
 use super::recovered::RecoveredMessages;
 use super::AggregatorError;
+use crate::profiler::{Profiler, ProfilerStat};
 use crate::record_stream::DynRecordStream;
 use futures::future::{BoxFuture, FutureExt};
 use std::collections::HashMap;
 use std::str::from_utf8;
+use std::sync::Arc;
+use std::time::Instant;
 
 fn build_full_measurement_json(
   metric_chain: Vec<(String, String)>,
@@ -24,6 +27,7 @@ fn report_measurements_recursive<'a>(
   out_stream: Option<&'a DynRecordStream>,
   metric_chain: Vec<(String, String)>,
   parent_msg_tag: Option<Vec<u8>>,
+  profiler: Arc<Profiler>,
 ) -> BoxFuture<'a, Result<i64, AggregatorError>> {
   async move {
     let tags = rec_msgs.get_tags_by_parent(epoch, parent_msg_tag);
@@ -47,6 +51,7 @@ fn report_measurements_recursive<'a>(
           out_stream,
           metric_chain.clone(),
           Some(tag),
+          profiler.clone(),
         )
         .await?;
 
@@ -65,10 +70,14 @@ fn report_measurements_recursive<'a>(
       if is_final {
         recovered_count += msg.count;
         let full_msmt = build_full_measurement_json(metric_chain, msg.count)?;
+        let start_instant = Instant::now();
         match out_stream {
           Some(o) => o.produce(&full_msmt).await?,
           None => println!("{}", from_utf8(&full_msmt)?),
         };
+        profiler
+          .record_range_time(ProfilerStat::OutStreamProduceTime, start_instant)
+          .await;
         msg.count = 0;
       }
       rec_msgs.add(msg);
@@ -84,6 +93,7 @@ pub async fn report_measurements(
   epoch: u8,
   partial_report: bool,
   out_stream: Option<&DynRecordStream>,
+  profiler: Arc<Profiler>,
 ) -> Result<i64, AggregatorError> {
   Ok(
     report_measurements_recursive(
@@ -93,6 +103,7 @@ pub async fn report_measurements(
       out_stream,
       Vec::new(),
       None,
+      profiler,
     )
     .await?,
   )
@@ -109,6 +120,7 @@ mod tests {
   async fn full_report() {
     let record_stream = TestRecordStream::default();
     let mut recovered_msgs = RecoveredMessages::default();
+    let profiler = Arc::new(Profiler::default());
 
     let new_rec_msgs = vec![
       RecoveredMessage {
@@ -171,9 +183,15 @@ mod tests {
     for rec_msg in new_rec_msgs {
       recovered_msgs.add(rec_msg);
     }
-    let rec_count = report_measurements(&mut recovered_msgs, 2, false, Some(&record_stream))
-      .await
-      .unwrap();
+    let rec_count = report_measurements(
+      &mut recovered_msgs,
+      2,
+      false,
+      Some(&record_stream),
+      profiler,
+    )
+    .await
+    .unwrap();
 
     assert_eq!(rec_count, 17);
     let records = parse_and_sort_records(record_stream.records_produced.into_inner());
@@ -207,6 +225,7 @@ mod tests {
   async fn partial_report() {
     let record_stream = TestRecordStream::default();
     let mut recovered_msgs = RecoveredMessages::default();
+    let profiler = Arc::new(Profiler::default());
 
     let new_rec_msgs = vec![
       RecoveredMessage {
@@ -269,7 +288,7 @@ mod tests {
     for rec_msg in new_rec_msgs {
       recovered_msgs.add(rec_msg);
     }
-    report_measurements(&mut recovered_msgs, 2, true, Some(&record_stream))
+    report_measurements(&mut recovered_msgs, 2, true, Some(&record_stream), profiler)
       .await
       .unwrap();
 
