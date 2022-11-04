@@ -5,18 +5,16 @@ mod recovered;
 mod report;
 
 use crate::epoch::get_current_epoch;
-use crate::models::{DBPool, PgStoreError};
+use crate::models::{begin_transaction, commit_transaction, DBPool, PgStoreError};
 use crate::profiler::{Profiler, ProfilerStat};
 use crate::record_stream::{KafkaRecordStream, RecordStream, RecordStreamArc, RecordStreamError};
 use crate::star::AppSTARError;
 use consume::consume_and_group;
 use derive_more::{Display, Error, From};
-use diesel::connection::{Connection, TransactionManager};
 use futures::future::try_join_all;
 use nested_sta_rs::errors::NestedSTARError;
 use processing::{process_expired_epochs, start_subtask};
 use std::env;
-use std::ops::Deref;
 use std::str::{FromStr, Utf8Error};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
@@ -112,12 +110,7 @@ pub async fn start_aggregation(
     let processing_start_instant = Instant::now();
 
     let store_conn = Arc::new(Mutex::new(db_pool.get().await?));
-    let store_conn_lock = store_conn.lock().unwrap();
-    store_conn_lock
-      .transaction_manager()
-      .begin_transaction(store_conn_lock.deref())
-      .map_err(|e| PgStoreError::from(e))?;
-    drop(store_conn_lock);
+    begin_transaction(store_conn.clone())?;
 
     let grouped_msgs_split = grouped_msgs.split(worker_count).into_iter().enumerate();
     for (id, grouped_msgs) in grouped_msgs_split {
@@ -142,12 +135,7 @@ pub async fn start_aggregation(
     }
 
     info!("Committing DB transaction");
-    let store_conn_lock = store_conn.lock().unwrap();
-    store_conn_lock
-      .transaction_manager()
-      .commit_transaction(store_conn_lock.deref())
-      .map_err(|e| PgStoreError::from(e))?;
-    drop(store_conn_lock);
+    commit_transaction(store_conn)?;
 
     // Commit consumption to Kafka cluster, to mark messages as "already read"
     info!("Committing Kafka consumption");
@@ -171,14 +159,23 @@ pub async fn start_aggregation(
   // Delete pending/recovered messages from DB.
   info!("Checking/processing expired epochs");
   let profiler = Arc::new(Profiler::default());
-  let out_stream = create_output_stream(output_measurements_to_stdout)?;
+  let mut out_stream = create_output_stream(output_measurements_to_stdout)?;
+  if let Some(out_stream) = out_stream.as_mut() {
+    out_stream.begin_producer_transaction()?;
+  }
+  let db_conn = Arc::new(Mutex::new(db_pool.get().await?));
+  begin_transaction(db_conn.clone())?;
   process_expired_epochs(
-    Arc::new(Mutex::new(db_pool.get().await?)),
+    db_conn.clone(),
     current_epoch,
     out_stream.as_ref().map(|v| v.as_ref()),
     profiler.clone(),
   )
   .await?;
+  if let Some(out_stream) = out_stream.as_ref() {
+    out_stream.commit_producer_transaction()?;
+  }
+  commit_transaction(db_conn)?;
   info!("Profiler summary:\n{}", profiler.summary().await);
 
   info!("Finished aggregation");

@@ -2,6 +2,8 @@ mod error;
 mod pending_msg;
 mod recovered_msg;
 
+use diesel::connection::TransactionManager;
+use diesel::Connection;
 pub use error::*;
 pub use pending_msg::*;
 pub use recovered_msg::*;
@@ -10,6 +12,7 @@ use async_trait::async_trait;
 use diesel::pg::PgConnection;
 use diesel::r2d2::{ConnectionManager, CustomizeConnection, Pool, PooledConnection};
 use std::env;
+use std::ops::Deref;
 use std::str::FromStr;
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
@@ -71,6 +74,26 @@ impl DBPool {
     }
     Err(PgStoreError::PoolTimeout)
   }
+}
+
+pub fn begin_transaction(store_conn: Arc<Mutex<DBConnection>>) -> Result<(), PgStoreError> {
+  let store_conn_lock = store_conn.lock().unwrap();
+  Ok(
+    store_conn_lock
+      .transaction_manager()
+      .begin_transaction(store_conn_lock.deref())
+      .map_err(|e| PgStoreError::from(e))?,
+  )
+}
+
+pub fn commit_transaction(store_conn: Arc<Mutex<DBConnection>>) -> Result<(), PgStoreError> {
+  let store_conn_lock = store_conn.lock().unwrap();
+  Ok(
+    store_conn_lock
+      .transaction_manager()
+      .commit_transaction(store_conn_lock.deref())
+      .map_err(|e| PgStoreError::from(e))?,
+  )
 }
 
 #[async_trait]

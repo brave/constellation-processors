@@ -43,7 +43,8 @@ fn report_measurements_recursive<'a>(
       let mut metric_chain = metric_chain.clone();
       metric_chain.push((msg.metric_name.clone(), msg.metric_value.clone()));
 
-      let is_final = if msg.has_children {
+      // is_msmt_final: true if the current measurement should be reported right now
+      let is_msmt_final = if msg.has_children {
         let children_rec_count = report_measurements_recursive(
           rec_msgs,
           epoch,
@@ -58,16 +59,21 @@ fn report_measurements_recursive<'a>(
         msg.count -= children_rec_count;
 
         if msg.count > 0 && partial_report {
+          // partial_report is typically true during an expired epoch report.
+          // If the count for the current tag is non-zero, and child tags cannot be recovered,
+          // report the partial measurements now.
           true
         } else {
           recovered_count += children_rec_count;
           false
         }
       } else {
+        // if there are no children, we have recovered all tags in the metric chain;
+        // we can safely report the final measurement
         true
       };
 
-      if is_final {
+      if is_msmt_final {
         recovered_count += msg.count;
         let full_msmt = build_full_measurement_json(metric_chain, msg.count)?;
         let start_instant = Instant::now();
