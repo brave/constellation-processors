@@ -1,5 +1,7 @@
 use async_trait::async_trait;
 use derive_more::{Display, Error, From};
+use futures::future::try_join_all;
+use rand::random;
 use rdkafka::client::ClientContext;
 use rdkafka::config::ClientConfig;
 use rdkafka::consumer::{
@@ -11,9 +13,12 @@ use rdkafka::producer::{future_producer::FutureProducer, FutureRecord, Producer}
 use rdkafka::types::RDKafkaErrorCode;
 use rdkafka::TopicPartitionList;
 use std::env;
+use std::str::FromStr;
 use std::sync::Arc;
 use std::time::Duration;
-use tokio::sync::Mutex;
+use tokio::sync::mpsc::{error::SendError, unbounded_channel, UnboundedSender};
+use tokio::sync::{Mutex, RwLock};
+use tokio::task::{JoinError, JoinHandle};
 use tokio::time::sleep;
 
 const KAFKA_ENC_TOPIC_ENV_KEY: &str = "KAFKA_ENCRYPTED_TOPIC";
@@ -22,9 +27,13 @@ const DEFAULT_ENC_KAFKA_TOPIC: &str = "p3a-star-enc";
 const DEFAULT_OUT_KAFKA_TOPIC: &str = "p3a-star-out";
 const KAFKA_BROKERS_ENV_KEY: &str = "KAFKA_BROKERS";
 const KAFKA_ENABLE_PLAINTEXT_ENV_KEY: &str = "KAFKA_ENABLE_PLAINTEXT";
+const KAFKA_PRODUCER_QUEUE_TASK_COUNT_ENV_KEY: &str = "KAFKA_PRODUCE_QUEUE_TASK_COUNT";
+const DEFAULT_KAFKA_PRODUCER_QUEUE_TASK_COUNT: &str = "64";
 
 const KAFKA_INIT_TRX_TIMEOUT_SECS: u64 = 30;
 const KAFKA_COMMIT_TRX_TIMEOUT_SECS: u64 = 60 * 30;
+
+const KAFKA_PRODUCE_TIMEOUT_SECS: u64 = 12;
 
 #[derive(Debug, Display, Error, From)]
 #[display(fmt = "Record stream error: {}")]
@@ -33,6 +42,8 @@ pub enum RecordStreamError {
   Deserialize,
   ProducerNotPresent,
   TestConsumeTimeout,
+  MpscSendError(SendError<Vec<u8>>),
+  Join(JoinError),
 }
 
 struct KafkaContext;
@@ -63,6 +74,10 @@ pub trait RecordStream {
 
   async fn produce(&self, record: &[u8]) -> Result<(), RecordStreamError>;
 
+  async fn queue_produce(&self, record: Vec<u8>) -> Result<(), RecordStreamError>;
+
+  async fn join_produce_queues(&self) -> Result<(), RecordStreamError>;
+
   async fn consume(&self) -> Result<Vec<u8>, RecordStreamError>;
 
   async fn commit_last_consume(&self) -> Result<(), RecordStreamError>;
@@ -72,9 +87,17 @@ pub type DynRecordStream = dyn RecordStream + Send + Sync;
 pub type RecordStreamArc = Arc<DynRecordStream>;
 
 pub struct KafkaRecordStream {
-  producer: Option<FutureProducer<KafkaContext>>,
+  producer: Option<Arc<FutureProducer<KafkaContext>>>,
   consumer: Option<StreamConsumer<KafkaContext>>,
   topic: String,
+  producer_queues: Option<
+    RwLock<
+      Vec<(
+        JoinHandle<Result<(), RecordStreamError>>,
+        UnboundedSender<Vec<u8>>,
+      )>,
+    >,
+  >,
 }
 
 impl KafkaRecordStream {
@@ -89,6 +112,7 @@ impl KafkaRecordStream {
       producer: None,
       consumer: None,
       topic: topic.clone(),
+      producer_queues: None,
     };
     if enable_producer {
       let context = KafkaContext;
@@ -97,7 +121,7 @@ impl KafkaRecordStream {
       if use_output_topic {
         config_ref = config_ref.set("transactional.id", "main");
       }
-      result.producer = Some(
+      result.producer = Some(Arc::new(
         config_ref
           .set("message.timeout.ms", "3600000")
           .set("transaction.timeout.ms", "3600000")
@@ -105,7 +129,10 @@ impl KafkaRecordStream {
           .set("socket.timeout.ms", "300000")
           .create_with_context(context)
           .unwrap(),
-      );
+      ));
+      if use_output_topic {
+        result.init_producer_queues();
+      }
     }
     if enable_consumer {
       let context = KafkaContext;
@@ -140,6 +167,34 @@ impl KafkaRecordStream {
       result.set("security.protocol", "plaintext");
     }
     result
+  }
+
+  fn init_producer_queues(&mut self) {
+    let task_count = usize::from_str(
+      env::var(KAFKA_PRODUCER_QUEUE_TASK_COUNT_ENV_KEY)
+        .unwrap_or(DEFAULT_KAFKA_PRODUCER_QUEUE_TASK_COUNT.to_string())
+        .as_str(),
+    )
+    .unwrap();
+    let producer_queues = (0..task_count)
+      .map(|_| {
+        let (tx, mut rx) = unbounded_channel::<Vec<u8>>();
+        let producer = self.producer.as_ref().unwrap().clone();
+        let topic = self.topic.clone();
+        let handle = tokio::spawn(async move {
+          while let Some(msg) = rx.recv().await {
+            let record: FutureRecord<str, [u8]> = FutureRecord::to(&topic).payload(&msg);
+            let send_result = producer
+              .send(record, Duration::from_secs(KAFKA_PRODUCE_TIMEOUT_SECS))
+              .await;
+            send_result.map_err(|(e, _)| RecordStreamError::from(e))?;
+          }
+          Ok(())
+        });
+        (handle, tx)
+      })
+      .collect::<Vec<_>>();
+    self.producer_queues = Some(RwLock::new(producer_queues));
   }
 }
 
@@ -181,11 +236,42 @@ impl RecordStream for KafkaRecordStream {
   async fn produce(&self, record: &[u8]) -> Result<(), RecordStreamError> {
     let producer = self.producer.as_ref().expect("Kafka producer not enabled");
     let record: FutureRecord<str, [u8]> = FutureRecord::to(&self.topic).payload(record);
-    let send_result = producer.send(record, Duration::from_secs(12)).await;
-    match send_result {
-      Ok(_) => Ok(()),
-      Err((e, _)) => Err(RecordStreamError::from(e)),
-    }
+    let send_result = producer
+      .send(record, Duration::from_secs(KAFKA_PRODUCE_TIMEOUT_SECS))
+      .await;
+    send_result.map_err(|(e, _)| RecordStreamError::from(e))?;
+    Ok(())
+  }
+
+  async fn queue_produce(&self, record: Vec<u8>) -> Result<(), RecordStreamError> {
+    let producer_queues = self
+      .producer_queues
+      .as_ref()
+      .expect("Producer queues not existing")
+      .read()
+      .await;
+    let queue_index = (random::<u16>() as usize) % producer_queues.len();
+    let (_, tx) = producer_queues.get(queue_index).unwrap();
+    Ok(tx.send(record)?)
+  }
+
+  async fn join_produce_queues(&self) -> Result<(), RecordStreamError> {
+    let mut producer_queues = self
+      .producer_queues
+      .as_ref()
+      .expect("Producer queues not existing")
+      .write()
+      .await;
+    try_join_all(
+      producer_queues
+        .drain(..)
+        .map(|(handle, _)| handle)
+        .collect::<Vec<_>>(),
+    )
+    .await?
+    .into_iter()
+    .collect::<Result<Vec<()>, RecordStreamError>>()?;
+    Ok(())
   }
 
   async fn consume(&self) -> Result<Vec<u8>, RecordStreamError> {
@@ -243,6 +329,14 @@ impl RecordStream for TestRecordStream {
 
   async fn produce(&self, record: &[u8]) -> Result<(), RecordStreamError> {
     self.records_produced.lock().await.push(record.to_vec());
+    Ok(())
+  }
+
+  async fn queue_produce(&self, record: Vec<u8>) -> Result<(), RecordStreamError> {
+    self.produce(&record).await
+  }
+
+  async fn join_produce_queues(&self) -> Result<(), RecordStreamError> {
     Ok(())
   }
 

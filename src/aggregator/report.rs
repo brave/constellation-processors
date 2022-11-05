@@ -78,7 +78,7 @@ fn report_measurements_recursive<'a>(
         let full_msmt = build_full_measurement_json(metric_chain, msg.count)?;
         let start_instant = Instant::now();
         match out_stream {
-          Some(o) => o.produce(&full_msmt).await?,
+          Some(o) => o.queue_produce(full_msmt).await?,
           None => println!("{}", from_utf8(&full_msmt)?),
         };
         profiler

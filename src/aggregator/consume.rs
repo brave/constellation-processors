@@ -100,11 +100,10 @@ pub async fn consume_and_group(
     grouped_msgs.add(parsed_msg, None);
   }
 
-  for handle in try_join_all(task_handles).await? {
-    if let Err(e) = handle {
-      return Err(e);
-    }
-  }
+  try_join_all(task_handles)
+    .await?
+    .into_iter()
+    .collect::<Result<Vec<()>, AggregatorError>>()?;
 
   info!("Messages grouped");
 

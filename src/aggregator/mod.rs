@@ -130,6 +130,8 @@ pub async fn start_aggregation(
     let total_measurement_count = measurement_counts.iter().sum::<i64>();
 
     if let Some(out_stream) = out_stream.as_ref() {
+      info!("Waiting for Kafka producer queues to finish...");
+      out_stream.join_produce_queues().await?;
       info!("Committing Kafka output transaction");
       out_stream.commit_producer_transaction()?;
     }
