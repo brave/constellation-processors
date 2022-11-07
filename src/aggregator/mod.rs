@@ -51,6 +51,14 @@ fn create_output_stream(
   })
 }
 
+async fn wait_and_commit_producer(out_stream: &RecordStreamArc) -> Result<(), AggregatorError> {
+  info!("Waiting for Kafka producer queues to finish...");
+  out_stream.join_produce_queues().await?;
+  info!("Committing Kafka output transaction");
+  out_stream.commit_producer_transaction()?;
+  Ok(())
+}
+
 pub async fn start_aggregation(
   worker_count: usize,
   msg_collect_count: usize,
@@ -78,7 +86,7 @@ pub async fn start_aggregation(
 
     info!("Starting iteration {}", i);
 
-    let mut out_stream = create_output_stream(output_measurements_to_stdout)?;
+    let out_stream = create_output_stream(output_measurements_to_stdout)?;
 
     let mut in_streams: Vec<RecordStreamArc> = Vec::new();
     for _ in 0..CONSUMER_COUNT {
@@ -99,7 +107,7 @@ pub async fn start_aggregation(
       .record_total_time(ProfilerStat::DownloadTime, download_start_instant)
       .await;
 
-    if let Some(out_stream) = out_stream.as_mut() {
+    if let Some(out_stream) = out_stream.as_ref() {
       out_stream.begin_producer_transaction()?;
     }
 
@@ -130,10 +138,7 @@ pub async fn start_aggregation(
     let total_measurement_count = measurement_counts.iter().sum::<i64>();
 
     if let Some(out_stream) = out_stream.as_ref() {
-      info!("Waiting for Kafka producer queues to finish...");
-      out_stream.join_produce_queues().await?;
-      info!("Committing Kafka output transaction");
-      out_stream.commit_producer_transaction()?;
+      wait_and_commit_producer(out_stream).await?;
     }
 
     info!("Committing DB transaction");
@@ -175,7 +180,7 @@ pub async fn start_aggregation(
   )
   .await?;
   if let Some(out_stream) = out_stream.as_ref() {
-    out_stream.commit_producer_transaction()?;
+    wait_and_commit_producer(out_stream).await?;
   }
   commit_transaction(db_conn)?;
   info!("Profiler summary:\n{}", profiler.summary().await);
