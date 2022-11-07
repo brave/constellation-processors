@@ -1,5 +1,7 @@
 use super::AggregatorError;
-use crate::models::{BatchInsert, DBConnection, NewRecoveredMessage, RecoveredMessage};
+use crate::models::{
+  BatchInsert, DBConnection, DBStorageConnections, NewRecoveredMessage, RecoveredMessage,
+};
 use crate::profiler::Profiler;
 use std::collections::{HashMap, HashSet};
 use std::sync::{Arc, Mutex};
@@ -88,7 +90,7 @@ impl RecoveredMessages {
 
   pub async fn save(
     self,
-    conn: Arc<Mutex<DBConnection>>,
+    store_conns: &Arc<DBStorageConnections>,
     profiler: Arc<Profiler>,
   ) -> Result<(), AggregatorError> {
     let mut new_msgs = Vec::new();
@@ -97,15 +99,20 @@ impl RecoveredMessages {
         if rec_msg.id == 0 {
           new_msgs.push(NewRecoveredMessage::from(rec_msg));
         } else {
-          RecoveredMessage::update_count(conn.clone(), rec_msg.id, rec_msg.count, profiler.clone())
-            .await?;
+          RecoveredMessage::update_count(
+            store_conns.get(),
+            rec_msg.id,
+            rec_msg.count,
+            profiler.clone(),
+          )
+          .await?;
         }
       }
     }
     for new_msgs in new_msgs.chunks(INSERT_BATCH_SIZE) {
       let new_msgs = new_msgs.to_vec();
       new_msgs
-        .insert_batch(conn.clone(), profiler.clone())
+        .insert_batch(store_conns.get(), profiler.clone())
         .await?;
     }
     Ok(())
@@ -180,12 +187,15 @@ mod tests {
     assert!(recovered_msgs.get_mut(3, &vec![55; 20]).is_none());
 
     let db_pool = Arc::new(DBPool::new(true));
-    let conn = Arc::new(Mutex::new(db_pool.get().await.unwrap()));
+    let store_conns = Arc::new(DBStorageConnections::new(&db_pool, true).await.unwrap());
 
     recovered_msgs
-      .save(conn.clone(), profiler.clone())
+      .save(&store_conns, profiler.clone())
       .await
       .unwrap();
+    drop(store_conns);
+
+    let conn = Arc::new(Mutex::new(db_pool.get().await.unwrap()));
     recovered_msgs = RecoveredMessages::default();
     for epoch in 0..6 {
       let tags = vec![
@@ -266,10 +276,14 @@ mod tests {
       recovered_msgs.add(rec_msg);
     }
 
+    drop(conn);
+    let store_conns = Arc::new(DBStorageConnections::new(&db_pool, true).await.unwrap());
     recovered_msgs
-      .save(conn.clone(), profiler.clone())
+      .save(&store_conns, profiler.clone())
       .await
       .unwrap();
+    drop(store_conns);
+    let conn = Arc::new(Mutex::new(db_pool.get().await.unwrap()));
 
     for epoch in 3..=4 {
       let rec_msg =

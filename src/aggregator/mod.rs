@@ -5,7 +5,9 @@ mod recovered;
 mod report;
 
 use crate::epoch::get_current_epoch;
-use crate::models::{begin_transaction, commit_transaction, DBPool, PgStoreError};
+use crate::models::{
+  begin_db_transaction, commit_db_transaction, DBPool, DBStorageConnections, PgStoreError,
+};
 use crate::profiler::{Profiler, ProfilerStat};
 use crate::record_stream::{KafkaRecordStream, RecordStream, RecordStreamArc, RecordStreamError};
 use crate::star::AppSTARError;
@@ -117,14 +119,13 @@ pub async fn start_aggregation(
 
     let processing_start_instant = Instant::now();
 
-    let store_conn = Arc::new(Mutex::new(db_pool.get().await?));
-    begin_transaction(store_conn.clone())?;
+    let store_conns = Arc::new(DBStorageConnections::new(&db_pool, false).await?);
 
     let grouped_msgs_split = grouped_msgs.split(worker_count).into_iter().enumerate();
     for (id, grouped_msgs) in grouped_msgs_split {
       tasks.push(start_subtask(
         id,
-        store_conn.clone(),
+        store_conns.clone(),
         db_pool.clone(),
         out_stream.clone(),
         grouped_msgs,
@@ -141,8 +142,8 @@ pub async fn start_aggregation(
       wait_and_commit_producer(out_stream).await?;
     }
 
-    info!("Committing DB transaction");
-    commit_transaction(store_conn)?;
+    info!("Committing DB transactions");
+    store_conns.commit()?;
 
     // Commit consumption to Kafka cluster, to mark messages as "already read"
     info!("Committing Kafka consumption");
@@ -171,7 +172,7 @@ pub async fn start_aggregation(
     out_stream.begin_producer_transaction()?;
   }
   let db_conn = Arc::new(Mutex::new(db_pool.get().await?));
-  begin_transaction(db_conn.clone())?;
+  begin_db_transaction(db_conn.clone())?;
   process_expired_epochs(
     db_conn.clone(),
     current_epoch,
@@ -182,7 +183,7 @@ pub async fn start_aggregation(
   if let Some(out_stream) = out_stream.as_ref() {
     wait_and_commit_producer(out_stream).await?;
   }
-  commit_transaction(db_conn)?;
+  commit_db_transaction(db_conn)?;
   info!("Profiler summary:\n{}", profiler.summary().await);
 
   info!("Finished aggregation");

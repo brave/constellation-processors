@@ -1,6 +1,6 @@
 use super::recovered::RecoveredMessages;
 use super::AggregatorError;
-use crate::models::{BatchInsert, DBConnection, DBPool, NewPendingMessage, PendingMessage};
+use crate::models::{BatchInsert, DBPool, DBStorageConnections, NewPendingMessage, PendingMessage};
 use crate::profiler::Profiler;
 use crate::star::serialize_message_bincode;
 use futures::future::try_join_all;
@@ -108,7 +108,7 @@ impl GroupedMessages {
 
   pub async fn store_new_pending_msgs(
     self,
-    conn: Arc<Mutex<DBConnection>>,
+    store_conns: &Arc<DBStorageConnections>,
     profiler: Arc<Profiler>,
   ) -> Result<(), AggregatorError> {
     for (epoch, mut epoch_chunks) in self.msg_chunks {
@@ -132,7 +132,7 @@ impl GroupedMessages {
         for new_msgs in new_pending_msgs.chunks(INSERT_BATCH_SIZE) {
           let new_msgs = new_msgs.to_vec();
           new_msgs
-            .insert_batch(conn.clone(), profiler.clone())
+            .insert_batch(store_conns.get(), profiler.clone())
             .await?;
         }
       }
@@ -212,11 +212,12 @@ mod tests {
       assert_eq!(&tag_counts, expected_tag_counts);
     }
 
-    let conn = Arc::new(Mutex::new(db_pool.get().await.unwrap()));
+    let store_conns = Arc::new(DBStorageConnections::new(&db_pool, true).await.unwrap());
     grouped_msgs
-      .store_new_pending_msgs(conn, profiler.clone())
+      .store_new_pending_msgs(&store_conns, profiler.clone())
       .await
       .unwrap();
+    drop(store_conns);
 
     grouped_msgs = GroupedMessages::default();
 

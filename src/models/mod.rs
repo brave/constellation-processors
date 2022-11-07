@@ -11,6 +11,7 @@ pub use recovered_msg::*;
 use async_trait::async_trait;
 use diesel::pg::PgConnection;
 use diesel::r2d2::{ConnectionManager, CustomizeConnection, Pool, PooledConnection};
+use rand::{seq::SliceRandom, thread_rng};
 use std::env;
 use std::ops::Deref;
 use std::str::FromStr;
@@ -24,6 +25,8 @@ const DATABASE_URL_ENV_KEY: &str = "DATABASE_URL";
 const TEST_DATABASE_URL_ENV_KEY: &str = "TEST_DATABASE_URL";
 const MAX_CONN_ENV_KEY: &str = "DATABASE_MAX_CONN";
 const MAX_CONN_DEFAULT: &str = "100";
+const MAX_WRITE_CONN_ENV_KEY: &str = "DATABASE_MAX_WRITE_CONN";
+const MAX_WRITE_CONN_DEFAULT: &str = "8";
 const DB_POOL_TIMEOUT_SECS: u64 = 3600;
 const DB_POOL_POLL_MS: u64 = 100;
 
@@ -76,23 +79,56 @@ impl DBPool {
   }
 }
 
-pub fn begin_transaction(store_conn: Arc<Mutex<DBConnection>>) -> Result<(), PgStoreError> {
-  let store_conn_lock = store_conn.lock().unwrap();
+pub struct DBStorageConnections {
+  conns: Vec<Arc<Mutex<DBConnection>>>,
+}
+
+impl DBStorageConnections {
+  pub async fn new(db_pool: &Arc<DBPool>, using_test_db: bool) -> Result<Self, PgStoreError> {
+    let conn_count = if using_test_db {
+      1
+    } else {
+      usize::from_str(
+        &env::var(MAX_WRITE_CONN_ENV_KEY).unwrap_or(MAX_WRITE_CONN_DEFAULT.to_string()),
+      )
+      .unwrap_or_else(|_| panic!("{} must be a positive integer", MAX_WRITE_CONN_ENV_KEY))
+    };
+    let mut conns = Vec::new();
+    for _ in 0..conn_count {
+      let conn = Arc::new(Mutex::new(db_pool.get().await?));
+      begin_db_transaction(conn.clone())?;
+      conns.push(conn);
+    }
+    Ok(Self { conns })
+  }
+
+  pub fn get(&self) -> Arc<Mutex<DBConnection>> {
+    self.conns.choose(&mut thread_rng()).unwrap().clone()
+  }
+
+  pub fn commit(&self) -> Result<(), PgStoreError> {
+    for conn in &self.conns {
+      commit_db_transaction(conn.clone())?;
+    }
+    Ok(())
+  }
+}
+
+pub fn begin_db_transaction(conn: Arc<Mutex<DBConnection>>) -> Result<(), PgStoreError> {
+  let conn_lock = conn.lock().unwrap();
   Ok(
-    store_conn_lock
+    conn_lock
       .transaction_manager()
-      .begin_transaction(store_conn_lock.deref())
-      .map_err(|e| PgStoreError::from(e))?,
+      .begin_transaction(conn_lock.deref())?,
   )
 }
 
-pub fn commit_transaction(store_conn: Arc<Mutex<DBConnection>>) -> Result<(), PgStoreError> {
-  let store_conn_lock = store_conn.lock().unwrap();
+pub fn commit_db_transaction(conn: Arc<Mutex<DBConnection>>) -> Result<(), PgStoreError> {
+  let conn_lock = conn.lock().unwrap();
   Ok(
-    store_conn_lock
+    conn_lock
       .transaction_manager()
-      .commit_transaction(store_conn_lock.deref())
-      .map_err(|e| PgStoreError::from(e))?,
+      .commit_transaction(conn_lock.deref())?,
   )
 }
 
