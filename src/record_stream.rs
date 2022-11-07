@@ -1,7 +1,7 @@
 use async_trait::async_trait;
 use derive_more::{Display, Error, From};
 use futures::future::try_join_all;
-use rand::random;
+use rand::{seq::SliceRandom, thread_rng};
 use rdkafka::client::ClientContext;
 use rdkafka::config::ClientConfig;
 use rdkafka::consumer::{
@@ -250,8 +250,7 @@ impl RecordStream for KafkaRecordStream {
       .expect("Producer queues not existing")
       .read()
       .await;
-    let queue_index = (random::<u16>() as usize) % producer_queues.len();
-    let (_, tx) = producer_queues.get(queue_index).unwrap();
+    let (_, tx) = producer_queues.choose(&mut thread_rng()).unwrap();
     Ok(tx.send(record)?)
   }
 

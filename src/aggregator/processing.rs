@@ -3,7 +3,7 @@ use super::recovered::RecoveredMessages;
 use super::report::report_measurements;
 use super::AggregatorError;
 use crate::epoch::is_epoch_expired;
-use crate::models::{DBConnection, DBPool, PendingMessage, RecoveredMessage};
+use crate::models::{DBConnection, DBPool, DBStorageConnections, PendingMessage, RecoveredMessage};
 use crate::profiler::{Profiler, ProfilerStat};
 use crate::record_stream::{DynRecordStream, RecordStreamArc};
 use crate::star::{parse_message, recover_key, recover_msgs, AppSTARError, MsgRecoveryInfo};
@@ -136,7 +136,7 @@ fn process_one_layer(
 
 pub fn start_subtask(
   id: usize,
-  store_conn: Arc<Mutex<DBConnection>>,
+  store_conns: Arc<DBStorageConnections>,
   db_pool: Arc<DBPool>,
   out_stream: Option<RecordStreamArc>,
   mut grouped_msgs: GroupedMessages,
@@ -178,7 +178,7 @@ pub fn start_subtask(
 
       debug!("Task {}: Storing new pending messages", id);
       grouped_msgs
-        .store_new_pending_msgs(store_conn.clone(), profiler.clone())
+        .store_new_pending_msgs(&store_conns, profiler.clone())
         .await
         .unwrap();
 
@@ -192,7 +192,7 @@ pub fn start_subtask(
 
     info!("Task {}: Deleting old pending messages", id);
     for (epoch, msg_tag) in pending_tags_to_remove {
-      PendingMessage::delete_tag(store_conn.clone(), epoch as i16, msg_tag, profiler.clone())
+      PendingMessage::delete_tag(store_conns.get(), epoch as i16, msg_tag, profiler.clone())
         .await
         .unwrap();
     }
@@ -215,7 +215,7 @@ pub fn start_subtask(
     }
 
     info!("Task {}: Saving recovered messages", id);
-    rec_msgs.save(store_conn, profiler.clone()).await.unwrap();
+    rec_msgs.save(&store_conns, profiler.clone()).await.unwrap();
 
     profiler
       .record_range_time(ProfilerStat::TaskProcessingTime, processing_start_instant)
