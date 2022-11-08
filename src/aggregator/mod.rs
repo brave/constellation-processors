@@ -19,13 +19,11 @@ use processing::{process_expired_epochs, start_subtask};
 use std::env;
 use std::str::{FromStr, Utf8Error};
 use std::sync::{Arc, Mutex};
-use std::time::{Duration, Instant};
+use std::time::Instant;
 use tokio::task::JoinError;
-use tokio::time::sleep;
 
 pub const K_THRESHOLD_ENV_KEY: &str = "K_THRESHOLD";
 pub const K_THRESHOLD_DEFAULT: &str = "100";
-const COOLOFF_SECONDS: u64 = 15;
 
 const CONSUMER_COUNT: usize = 4;
 
@@ -83,16 +81,20 @@ pub async fn start_aggregation(
 
   info!("Starting aggregation...");
 
+  let out_stream = create_output_stream(output_measurements_to_stdout)?;
+
+  let mut in_streams: Vec<RecordStreamArc> = Vec::new();
+  for _ in 0..CONSUMER_COUNT {
+    in_streams.push(Arc::new(KafkaRecordStream::new(false, true, false)));
+  }
+
   for i in 0..iterations {
     let profiler = Arc::new(Profiler::default());
 
     info!("Starting iteration {}", i);
 
-    let out_stream = create_output_stream(output_measurements_to_stdout)?;
-
-    let mut in_streams: Vec<RecordStreamArc> = Vec::new();
-    for _ in 0..CONSUMER_COUNT {
-      in_streams.push(Arc::new(KafkaRecordStream::new(false, true, false)));
+    if let Some(out_stream) = out_stream.as_ref() {
+      out_stream.init_producer_queues().await;
     }
 
     info!("Consuming messages from stream");
@@ -147,7 +149,7 @@ pub async fn start_aggregation(
 
     // Commit consumption to Kafka cluster, to mark messages as "already read"
     info!("Committing Kafka consumption");
-    for in_stream in in_streams {
+    for in_stream in &in_streams {
       in_stream.commit_last_consume().await.unwrap();
     }
 
@@ -158,9 +160,6 @@ pub async fn start_aggregation(
     info!("Reported {} final measurements", total_measurement_count);
 
     info!("Profiler summary:\n{}", profiler.summary().await);
-
-    info!("Cooling off for {} seconds", COOLOFF_SECONDS);
-    sleep(Duration::from_secs(COOLOFF_SECONDS)).await;
   }
 
   // Check for expired epochs. Send off partial measurements.

@@ -74,6 +74,8 @@ pub trait RecordStream {
 
   async fn produce(&self, record: &[u8]) -> Result<(), RecordStreamError>;
 
+  async fn init_producer_queues(&self);
+
   async fn queue_produce(&self, record: Vec<u8>) -> Result<(), RecordStreamError>;
 
   async fn join_produce_queues(&self) -> Result<(), RecordStreamError>;
@@ -90,13 +92,11 @@ pub struct KafkaRecordStream {
   producer: Option<Arc<FutureProducer<KafkaContext>>>,
   consumer: Option<StreamConsumer<KafkaContext>>,
   topic: String,
-  producer_queues: Option<
-    RwLock<
-      Vec<(
-        JoinHandle<Result<(), RecordStreamError>>,
-        UnboundedSender<Vec<u8>>,
-      )>,
-    >,
+  producer_queues: RwLock<
+    Vec<(
+      JoinHandle<Result<(), RecordStreamError>>,
+      UnboundedSender<Vec<u8>>,
+    )>,
   >,
 }
 
@@ -112,7 +112,7 @@ impl KafkaRecordStream {
       producer: None,
       consumer: None,
       topic: topic.clone(),
-      producer_queues: None,
+      producer_queues: RwLock::new(Vec::new()),
     };
     if enable_producer {
       let context = KafkaContext;
@@ -130,9 +130,6 @@ impl KafkaRecordStream {
           .create_with_context(context)
           .unwrap(),
       ));
-      if use_output_topic {
-        result.init_producer_queues();
-      }
     }
     if enable_consumer {
       let context = KafkaContext;
@@ -167,34 +164,6 @@ impl KafkaRecordStream {
       result.set("security.protocol", "plaintext");
     }
     result
-  }
-
-  fn init_producer_queues(&mut self) {
-    let task_count = usize::from_str(
-      env::var(KAFKA_PRODUCER_QUEUE_TASK_COUNT_ENV_KEY)
-        .unwrap_or(DEFAULT_KAFKA_PRODUCER_QUEUE_TASK_COUNT.to_string())
-        .as_str(),
-    )
-    .unwrap();
-    let producer_queues = (0..task_count)
-      .map(|_| {
-        let (tx, mut rx) = unbounded_channel::<Vec<u8>>();
-        let producer = self.producer.as_ref().unwrap().clone();
-        let topic = self.topic.clone();
-        let handle = tokio::spawn(async move {
-          while let Some(msg) = rx.recv().await {
-            let record: FutureRecord<str, [u8]> = FutureRecord::to(&topic).payload(&msg);
-            let send_result = producer
-              .send(record, Duration::from_secs(KAFKA_PRODUCE_TIMEOUT_SECS))
-              .await;
-            send_result.map_err(|(e, _)| RecordStreamError::from(e))?;
-          }
-          Ok(())
-        });
-        (handle, tx)
-      })
-      .collect::<Vec<_>>();
-    self.producer_queues = Some(RwLock::new(producer_queues));
   }
 }
 
@@ -243,24 +212,40 @@ impl RecordStream for KafkaRecordStream {
     Ok(())
   }
 
+  async fn init_producer_queues(&self) {
+    let task_count = usize::from_str(
+      env::var(KAFKA_PRODUCER_QUEUE_TASK_COUNT_ENV_KEY)
+        .unwrap_or(DEFAULT_KAFKA_PRODUCER_QUEUE_TASK_COUNT.to_string())
+        .as_str(),
+    )
+    .unwrap();
+    let mut producer_queues = self.producer_queues.write().await;
+    for _ in 0..task_count {
+      let (tx, mut rx) = unbounded_channel::<Vec<u8>>();
+      let producer = self.producer.as_ref().unwrap().clone();
+      let topic = self.topic.clone();
+      let handle = tokio::spawn(async move {
+        while let Some(msg) = rx.recv().await {
+          let record: FutureRecord<str, [u8]> = FutureRecord::to(&topic).payload(&msg);
+          let send_result = producer
+            .send(record, Duration::from_secs(KAFKA_PRODUCE_TIMEOUT_SECS))
+            .await;
+          send_result.map_err(|(e, _)| RecordStreamError::from(e))?;
+        }
+        Ok(())
+      });
+      producer_queues.push((handle, tx));
+    }
+  }
+
   async fn queue_produce(&self, record: Vec<u8>) -> Result<(), RecordStreamError> {
-    let producer_queues = self
-      .producer_queues
-      .as_ref()
-      .expect("Producer queues not existing")
-      .read()
-      .await;
+    let producer_queues = self.producer_queues.read().await;
     let (_, tx) = producer_queues.choose(&mut thread_rng()).unwrap();
     Ok(tx.send(record)?)
   }
 
   async fn join_produce_queues(&self) -> Result<(), RecordStreamError> {
-    let mut producer_queues = self
-      .producer_queues
-      .as_ref()
-      .expect("Producer queues not existing")
-      .write()
-      .await;
+    let mut producer_queues = self.producer_queues.write().await;
     try_join_all(
       producer_queues
         .drain(..)
@@ -330,6 +315,8 @@ impl RecordStream for TestRecordStream {
     self.records_produced.lock().await.push(record.to_vec());
     Ok(())
   }
+
+  async fn init_producer_queues(&self) {}
 
   async fn queue_produce(&self, record: Vec<u8>) -> Result<(), RecordStreamError> {
     self.produce(&record).await
