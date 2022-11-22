@@ -3,7 +3,7 @@ use super::AggregatorError;
 use crate::record_stream::RecordStreamArc;
 use crate::star::parse_message;
 use futures::future::try_join_all;
-use nested_sta_rs::api::NestedMessage;
+use star_constellation::api::NestedMessage;
 use std::sync::Arc;
 use std::time::Duration;
 use tokio::sync::mpsc::{self, UnboundedSender};
@@ -116,8 +116,8 @@ mod tests {
   use super::*;
   use crate::record_stream::TestRecordStream;
   use crate::star::tests::generate_test_message;
-  use nested_sta_rs::api::SerializableNestedMessage;
-  use nested_sta_rs::randomness::testing::LocalFetcher;
+  use star_constellation::api::SerializableNestedMessage;
+  use star_constellation::randomness::testing::LocalFetcher;
 
   #[tokio::test]
   async fn consume_and_group_all() {

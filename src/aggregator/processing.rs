@@ -7,7 +7,7 @@ use crate::models::{DBConnection, DBPool, DBStorageConnections, PendingMessage, 
 use crate::profiler::{Profiler, ProfilerStat};
 use crate::record_stream::{DynRecordStream, RecordStreamArc};
 use crate::star::{parse_message, recover_key, recover_msgs, AppSTARError, MsgRecoveryInfo};
-use nested_sta_rs::errors::NestedSTARError;
+use star_constellation::Error as ConstellationError;
 use std::sync::{Arc, Mutex};
 use std::time::Instant;
 use tokio::task::JoinHandle;
@@ -79,7 +79,7 @@ fn process_one_layer(
         match recover_key(&msgs, *epoch, k_threshold) {
           Err(e) => {
             match e {
-              AppSTARError::Recovery(NestedSTARError::ShareRecoveryFailedError) => {
+              AppSTARError::Recovery(ConstellationError::ShareRecovery) => {
                 // Store new messages until we receive more shares in the future
                 for msg in msgs.drain(..new_msg_count) {
                   chunk.new_msgs.push(msg);
@@ -112,7 +112,7 @@ fn process_one_layer(
           metric_value: measurement.1,
           parent_recovered_msg_tag: chunk.parent_msg_tag.clone(),
           count: msgs_len,
-          key,
+          key: key.to_vec(),
           has_children: next_layer_messages.is_some(),
         });
       }

@@ -1,8 +1,8 @@
 use derive_more::{Display, Error, From};
-use nested_sta_rs::api::{
+use star_constellation::api::{
   key_recover, recover, NestedMessage, PartialMeasurement, SerializableNestedMessage,
 };
-use nested_sta_rs::errors::NestedSTARError;
+use star_constellation::Error as ConstellationError;
 use std::cmp::min;
 use std::str::{from_utf8, Utf8Error};
 
@@ -15,7 +15,7 @@ pub enum AppSTARError {
   #[display(fmt = "failed to split measurement by delimiter")]
   Delimiter,
   #[display(fmt = "failed to recover messages")]
-  Recovery(NestedSTARError),
+  Recovery(ConstellationError),
 }
 
 pub struct MsgRecoveryInfo {
@@ -95,8 +95,8 @@ pub fn recover_msgs(
 pub mod tests {
   use super::*;
   use crate::aggregator::{K_THRESHOLD_DEFAULT, K_THRESHOLD_ENV_KEY};
-  use nested_sta_rs::api::client;
-  use nested_sta_rs::randomness::testing::LocalFetcher as RandomnessFetcher;
+  use star_constellation::api::client;
+  use star_constellation::randomness::testing::LocalFetcher as RandomnessFetcher;
   use std::env;
   use std::str::FromStr;
 

@@ -14,8 +14,8 @@ use crate::star::AppSTARError;
 use consume::consume_and_group;
 use derive_more::{Display, Error, From};
 use futures::future::try_join_all;
-use nested_sta_rs::errors::NestedSTARError;
 use processing::{process_expired_epochs, start_subtask};
+use star_constellation::Error as ConstellationError;
 use std::env;
 use std::str::{FromStr, Utf8Error};
 use std::sync::{Arc, Mutex};
@@ -32,7 +32,7 @@ const CONSUMER_COUNT: usize = 4;
 pub enum AggregatorError {
   Utf8(Utf8Error),
   AppSTAR(AppSTARError),
-  NestedSTAR(NestedSTARError),
+  Constellation(ConstellationError),
   Database(PgStoreError),
   RecordStream(RecordStreamError),
   Join(JoinError),

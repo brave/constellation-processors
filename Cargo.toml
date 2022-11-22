@@ -1,11 +1,11 @@
 [package]
-name = "nested-star-processors"
+name = "constellation-processors"
 version = "0.1.0"
 edition = "2021"
 
 [dependencies]
-nested-sta-rs = { git = "https://github.com/brave-experiments/nested-sta-rs", branch = "main" }
-sta-rs = { git = "https://github.com/brave/sta-rs", branch = "main" }
+star-constellation = { git = "https://github.com/brave/constellation", rev = "6c91f94d7b307f7dec08e1a86edcbf789d420185" }
+sta-rs = { git = "https://github.com/brave/sta-rs" }
 actix-web = "4"
 env_logger = "0.9"
 log = "0.4"

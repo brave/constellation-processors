@@ -1,12 +1,10 @@
-# Nested STAR Processors
+# Constellation Processors
 
-Server-side collector, aggregator and data lake sink for recovering data protected by the nested [STAR](https://arxiv.org/abs/2109.10074) protocol.
-
-To be used in P3A Phase 2.
+Server-side collector, aggregator and data lake sink for recovering data protected by the nested version of the [STAR](https://arxiv.org/abs/2109.10074) protocol.
 
 Includes:
 
-- Server: for collecting messages protected by nested STAR
+- Server: for collecting messages protected by Constellation/STAR
 - Aggregator: for decrypting message data deemed recoverable
 - Data lake sink: for storage of decrypted message data
 
@@ -97,7 +95,7 @@ The `--output-measurements-to-stdout` switch can be used to output measurements 
 | LAKE_SINK_BATCH_SIZE | 1000 | No | Number of recovered measurements to store per data lake file. |
 | KAFKA_ENCRYPTED_TOPIC | p3a-star-enc | No | Topic for storing protected messages. |
 | KAFKA_OUTPUT_TOPIC | p3a-star-out | No | Topic for storing recovered measurements. |
-| K_THRESHOLD | 100 | No | The selected _k_ threshold for the nested STAR application. |
+| K_THRESHOLD | 100 | No | The selected _k_ threshold for the Constellation application. |
 
 ## Test client
 

@@ -40,7 +40,7 @@ impl DataLake {
     let rand_key: u64 = random();
     let full_key = format!(
       "{}/{}.jsonl",
-      Utc::today().naive_utc(),
+      Utc::now().naive_utc(),
       hex::encode(rand_key.to_le_bytes())
     );
     let contents = contents.as_bytes().to_vec();

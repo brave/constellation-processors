@@ -4,7 +4,7 @@ use crate::models::{BatchInsert, DBPool, DBStorageConnections, NewPendingMessage
 use crate::profiler::Profiler;
 use crate::star::serialize_message_bincode;
 use futures::future::try_join_all;
-use nested_sta_rs::api::NestedMessage;
+use star_constellation::api::NestedMessage;
 use std::cmp::{max, min};
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
@@ -167,7 +167,7 @@ mod tests {
   use crate::models::{DBPool, NewRecoveredMessage};
   use crate::star::tests::generate_test_message;
   use dotenv::dotenv;
-  use nested_sta_rs::randomness::testing::LocalFetcher;
+  use star_constellation::randomness::testing::LocalFetcher;
 
   #[tokio::test]
   async fn basic_group_and_pending_storage() {
