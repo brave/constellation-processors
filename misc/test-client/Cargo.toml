@@ -4,7 +4,7 @@ version = "0.1.0"
 edition = "2021"
 
 [dependencies]
-nested-sta-rs = { git = "https://github.com/brave-experiments/nested-sta-rs", branch = "main" }
+star-constellation = { git = "https://github.com/brave/constellation", rev = "6c91f94d7b307f7dec08e1a86edcbf789d420185" }
 base64 = "0.13"
 rand = "0.8"
 clap = { version = "4.0", features = ["derive"] }

@@ -1,8 +1,8 @@
 use clap::Parser;
 use futures::future::try_join_all;
-use nested_sta_rs::api::*;
-use nested_sta_rs::randomness::testing::{LocalFetcher, LocalFetcherResponse};
 use rand::{thread_rng, Rng};
+use star_constellation::api::*;
+use star_constellation::randomness::testing::{LocalFetcher, LocalFetcherResponse};
 use std::path::PathBuf;
 use std::str::FromStr;
 use std::sync::Arc;
