@@ -28,7 +28,7 @@ r2d2 = "0.8"
 chrono = "0.4"
 tokio-util = "0.7"
 reqwest = { version = "0.11", features = ["json"] }
-rusoto_core = "0.47"
+rusoto_core = "0.48"
 rusoto_s3 = "0.48"
 prometheus-client = "0.18"
 sentry = "0.27"
