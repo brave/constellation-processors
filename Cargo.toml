@@ -7,7 +7,7 @@ edition = "2021"
 star-constellation = { git = "https://github.com/brave/constellation", rev = "6c91f94d7b307f7dec08e1a86edcbf789d420185" }
 sta-rs = { git = "https://github.com/brave/sta-rs" }
 actix-web = "4"
-env_logger = "0.9"
+env_logger = "0.10"
 log = "0.4"
 tokio = { version = "1.17", features = ["full"] }
 futures = "0.3"
