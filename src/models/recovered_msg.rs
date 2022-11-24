@@ -4,7 +4,7 @@ use crate::profiler::{Profiler, ProfilerStat};
 use crate::schema::recovered_msgs;
 use async_trait::async_trait;
 use diesel::{ExpressionMethods, QueryDsl, RunQueryDsl};
-use std::ops::Deref;
+use std::ops::DerefMut;
 use std::sync::{Arc, Mutex};
 use std::time::Instant;
 use tokio::task;
@@ -23,7 +23,7 @@ pub struct RecoveredMessage {
 }
 
 #[derive(Insertable, Clone)]
-#[table_name = "recovered_msgs"]
+#[diesel(table_name = recovered_msgs)]
 pub struct NewRecoveredMessage {
   pub msg_tag: Vec<u8>,
   pub epoch_tag: i16,
@@ -61,12 +61,12 @@ impl RecoveredMessage {
     let result = task::spawn_blocking(move || {
       use crate::schema::recovered_msgs::dsl::*;
 
-      let conn = conn.lock().unwrap();
+      let mut conn = conn.lock().unwrap();
       Ok(
         recovered_msgs
           .filter(epoch_tag.eq(filter_epoch_tag))
           .filter(msg_tag.eq_any(filter_msg_tags))
-          .load(conn.deref())?,
+          .load(conn.deref_mut())?,
       )
     })
     .await?;
@@ -86,10 +86,10 @@ impl RecoveredMessage {
     let result = task::spawn_blocking(move || {
       use crate::schema::recovered_msgs::dsl::*;
 
-      let conn = conn.lock().unwrap();
+      let mut conn = conn.lock().unwrap();
       diesel::update(recovered_msgs.filter(id.eq(curr_id)))
         .set(count.eq(new_count))
-        .execute(conn.deref())?;
+        .execute(conn.deref_mut())?;
 
       Ok(())
     })
@@ -109,11 +109,11 @@ impl RecoveredMessage {
     let result = task::spawn_blocking(move || {
       use crate::schema::recovered_msgs::dsl::*;
 
-      let conn = conn.lock().unwrap();
+      let mut conn = conn.lock().unwrap();
       let result = recovered_msgs
         .filter(epoch_tag.eq(filter_epoch_tag))
         .filter(count.gt(0))
-        .load(conn.deref())?;
+        .load(conn.deref_mut())?;
       Ok(result)
     })
     .await?;
@@ -129,12 +129,12 @@ impl RecoveredMessage {
     task::spawn_blocking(move || {
       use crate::schema::recovered_msgs::dsl::*;
 
-      let conn = conn.lock().unwrap();
+      let mut conn = conn.lock().unwrap();
       Ok(
         recovered_msgs
           .select(epoch_tag)
           .distinct()
-          .load::<i16>(conn.deref())?,
+          .load::<i16>(conn.deref_mut())?,
       )
     })
     .await?
@@ -149,9 +149,9 @@ impl RecoveredMessage {
     let result = task::spawn_blocking(move || {
       use crate::schema::recovered_msgs::dsl::*;
 
-      let conn = conn.lock().unwrap();
+      let mut conn = conn.lock().unwrap();
       diesel::delete(recovered_msgs.filter(epoch_tag.eq(filter_epoch_tag)))
-        .execute(conn.deref())?;
+        .execute(conn.deref_mut())?;
       Ok(())
     })
     .await?;
@@ -171,10 +171,10 @@ impl BatchInsert<NewRecoveredMessage> for Vec<NewRecoveredMessage> {
   ) -> Result<(), PgStoreError> {
     let start_instant = Instant::now();
     let result = task::spawn_blocking(move || {
-      let conn = conn.lock().unwrap();
+      let mut conn = conn.lock().unwrap();
       diesel::insert_into(recovered_msgs::table)
         .values(self)
-        .execute(conn.deref())?;
+        .execute(conn.deref_mut())?;
       Ok(())
     })
     .await?;

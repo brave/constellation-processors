@@ -13,7 +13,7 @@ use diesel::pg::PgConnection;
 use diesel::r2d2::{ConnectionManager, CustomizeConnection, Pool, PooledConnection};
 use rand::{seq::SliceRandom, thread_rng};
 use std::env;
-use std::ops::Deref;
+use std::ops::DerefMut;
 use std::str::FromStr;
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
@@ -115,21 +115,13 @@ impl DBStorageConnections {
 }
 
 pub fn begin_db_transaction(conn: Arc<Mutex<DBConnection>>) -> Result<(), PgStoreError> {
-  let conn_lock = conn.lock().unwrap();
-  Ok(
-    conn_lock
-      .transaction_manager()
-      .begin_transaction(conn_lock.deref())?,
-  )
+  let mut conn_lock = conn.lock().unwrap();
+  Ok(<DBConnection as Connection>::TransactionManager::begin_transaction(conn_lock.deref_mut())?)
 }
 
 pub fn commit_db_transaction(conn: Arc<Mutex<DBConnection>>) -> Result<(), PgStoreError> {
-  let conn_lock = conn.lock().unwrap();
-  Ok(
-    conn_lock
-      .transaction_manager()
-      .commit_transaction(conn_lock.deref())?,
-  )
+  let mut conn_lock = conn.lock().unwrap();
+  Ok(<DBConnection as Connection>::TransactionManager::commit_transaction(conn_lock.deref_mut())?)
 }
 
 #[async_trait]

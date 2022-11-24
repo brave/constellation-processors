@@ -43,7 +43,7 @@ const SENTRY_DSN_ENV_KEY: &str = "SENTRY_DSN";
     ArgGroup::new("process-mode")
       .required(true)
       .multiple(true)
-      .args(&["aggregator", "lake-sink", "server"])
+      .args(&["aggregator", "lake_sink", "server"])
 ))]
 struct CliArgs {
   #[clap(short, long, help = "Enable server mode")]

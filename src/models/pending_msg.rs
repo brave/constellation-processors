@@ -4,7 +4,7 @@ use crate::profiler::{Profiler, ProfilerStat};
 use crate::schema::pending_msgs;
 use async_trait::async_trait;
 use diesel::{ExpressionMethods, QueryDsl, RunQueryDsl};
-use std::ops::Deref;
+use std::ops::DerefMut;
 use std::sync::{Arc, Mutex};
 use std::time::Instant;
 use tokio::task;
@@ -18,7 +18,7 @@ pub struct PendingMessage {
 }
 
 #[derive(Insertable, Clone)]
-#[table_name = "pending_msgs"]
+#[diesel(table_name = pending_msgs)]
 pub struct NewPendingMessage {
   pub msg_tag: Vec<u8>,
   pub epoch_tag: i16,
@@ -35,12 +35,12 @@ impl PendingMessage {
     let start_instant = Instant::now();
     let result = task::spawn_blocking(move || {
       use crate::schema::pending_msgs::dsl::*;
-      let conn = conn.lock().unwrap();
+      let mut conn = conn.lock().unwrap();
       Ok(
         pending_msgs
           .filter(epoch_tag.eq(filter_epoch_tag))
           .filter(msg_tag.eq(filter_msg_tag))
-          .load(conn.deref())?,
+          .load(conn.deref_mut())?,
       )
     })
     .await?;
@@ -58,8 +58,9 @@ impl PendingMessage {
     let start_instant = Instant::now();
     let result = task::spawn_blocking(move || {
       use crate::schema::pending_msgs::dsl::*;
-      let conn = conn.lock().unwrap();
-      diesel::delete(pending_msgs.filter(epoch_tag.eq(filter_epoch_tag))).execute(conn.deref())?;
+      let mut conn = conn.lock().unwrap();
+      diesel::delete(pending_msgs.filter(epoch_tag.eq(filter_epoch_tag)))
+        .execute(conn.deref_mut())?;
       Ok(())
     })
     .await?;
@@ -78,13 +79,13 @@ impl PendingMessage {
     let start_instant = Instant::now();
     let result = task::spawn_blocking(move || {
       use crate::schema::pending_msgs::dsl::*;
-      let conn = conn.lock().unwrap();
+      let mut conn = conn.lock().unwrap();
       diesel::delete(
         pending_msgs
           .filter(epoch_tag.eq(filter_epoch_tag))
           .filter(msg_tag.eq(filter_msg_tag)),
       )
-      .execute(conn.deref())?;
+      .execute(conn.deref_mut())?;
       Ok(())
     })
     .await?;
@@ -104,10 +105,10 @@ impl BatchInsert<NewPendingMessage> for Vec<NewPendingMessage> {
   ) -> Result<(), PgStoreError> {
     let start_instant = Instant::now();
     let result = task::spawn_blocking(move || {
-      let conn = conn.lock().unwrap();
+      let mut conn = conn.lock().unwrap();
       diesel::insert_into(pending_msgs::table)
         .values(self)
-        .execute(conn.deref())?;
+        .execute(conn.deref_mut())?;
       Ok(())
     })
     .await?;
