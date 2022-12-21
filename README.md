@@ -20,7 +20,7 @@ Run `cargo run -- -h` to see options:
 
 ```
 USAGE:
-    nested-star-processors [OPTIONS] <--aggregator|--lake-sink|--server>
+    constellation-processors [OPTIONS] <--aggregator|--lake-sink|--server>
 
 OPTIONS:
     -a, --aggregator
