@@ -1,5 +1,6 @@
 target
 misc
+!misc/rds_iam_bootstrap
 .git
 .github
 nested-sta-rs/.git
