@@ -1,5 +1,8 @@
 #!/bin/sh
 
+alias urlencode='python3 -c "import sys, urllib.parse as ul; \
+print (ul.quote_plus(sys.stdin.readlines()[0]))"'
+
 export $(printf "AWS_ACCESS_KEY_ID=%s AWS_SECRET_ACCESS_KEY=%s AWS_SESSION_TOKEN=%s" \
 $(aws sts assume-role \
 --role-arn $DATABASE_ROLE \
@@ -11,7 +14,7 @@ DATABASE_PASSWORD="$(aws rds generate-db-auth-token \
 --hostname $DATABASE_HOST \
 --port $DATABASE_PORT \
 --region $DATABASE_REGION \
---user $DATABASE_USER)"
+--user $DATABASE_USER | urlencode)"
 
 export DATABASE_URL="postgres://$DATABASE_USER:$DATABASE_PASSWORD@$DATABASE_HOST/$DATABASE_INSTANCE"
 

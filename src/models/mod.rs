@@ -57,7 +57,9 @@ impl DBPool {
         .min_idle(Some(1))
         .max_size(1)
     } else {
-      builder.max_size(pool_max_size)
+      builder
+        .min_idle(Some(pool_max_size))
+        .max_size(pool_max_size)
     };
 
     Self {
