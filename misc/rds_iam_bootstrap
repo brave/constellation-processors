@@ -1,7 +1,7 @@
 #!/bin/sh
 
 alias urlencode='python3 -c "import sys, urllib.parse as ul; \
-print (ul.quote_plus(sys.stdin.readlines()[0]))"'
+print (ul.quote_plus(sys.stdin.readlines()[0].strip()))"'
 
 export $(printf "AWS_ACCESS_KEY_ID=%s AWS_SECRET_ACCESS_KEY=%s AWS_SESSION_TOKEN=%s" \
 $(aws sts assume-role \

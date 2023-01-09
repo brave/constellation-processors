@@ -6,11 +6,13 @@ use diesel::connection::TransactionManager;
 use diesel::Connection;
 pub use error::*;
 pub use pending_msg::*;
+use r2d2::ManageConnection;
 pub use recovered_msg::*;
 
 use async_trait::async_trait;
 use diesel::pg::PgConnection;
 use diesel::r2d2::{ConnectionManager, CustomizeConnection, Pool, PooledConnection};
+use diesel_migrations::{embed_migrations, EmbeddedMigrations, MigrationHarness};
 use rand::{seq::SliceRandom, thread_rng};
 use std::env;
 use std::ops::DerefMut;
@@ -29,6 +31,8 @@ const MAX_WRITE_CONN_ENV_KEY: &str = "DATABASE_MAX_WRITE_CONN";
 const MAX_WRITE_CONN_DEFAULT: &str = "8";
 const DB_POOL_TIMEOUT_SECS: u64 = 3600;
 const DB_POOL_POLL_MS: u64 = 100;
+
+const MIGRATIONS: EmbeddedMigrations = embed_migrations!("migrations");
 
 pub type DBConnection = PooledConnection<ConnectionManager<PgConnection>>;
 
@@ -49,7 +53,14 @@ impl DBPool {
       u32::from_str(&env::var(MAX_CONN_ENV_KEY).unwrap_or(MAX_CONN_DEFAULT.to_string()))
         .unwrap_or_else(|_| panic!("{} must be a positive integer", MAX_CONN_ENV_KEY));
 
-    let db_mgr = ConnectionManager::new(db_url);
+    let db_mgr: ConnectionManager<PgConnection> = ConnectionManager::new(db_url);
+
+    db_mgr
+      .connect()
+      .expect("could not connect to db it run migrations")
+      .run_pending_migrations(MIGRATIONS)
+      .expect("failed to run migrations");
+
     let mut builder = Pool::builder();
     builder = if use_test_db {
       builder

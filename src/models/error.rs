@@ -11,4 +11,6 @@ pub enum PgStoreError {
   Join(JoinError),
   #[display(fmt = "DB pool timeout")]
   PoolTimeout,
+  #[display(fmt = "failed to apply migrations")]
+  Migration,
 }

@@ -10,6 +10,7 @@ RUN ./aws/install
 RUN rm -rf ./aws
 
 COPY ./src ./src
+COPY ./migrations ./migrations
 COPY ./Cargo.toml .
 COPY ./Cargo.lock .
 
