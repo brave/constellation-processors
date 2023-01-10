@@ -7,6 +7,7 @@ use std::env;
 
 const S3_ENDPOINT_ENV_VAR: &str = "S3_ENDPOINT";
 const OUTPUT_S3_BUCKET_ENV_KEY: &str = "S3_OUTPUT_BUCKET";
+const WEB_IDENTITY_ENV_VAR: &str = "AWS_WEB_IDENTITY_TOKEN_FILE";
 const DEFAULT_OUTPUT_BUCKET_NAME: &str = "p3a-star-recovered";
 
 #[derive(From, Error, Display, Debug)]
@@ -29,8 +30,18 @@ impl DataLake {
       },
       Err(_) => Default::default(),
     };
+    let s3 = if env::var(WEB_IDENTITY_ENV_VAR).is_ok() {
+      let provider = rusoto_credential::AutoRefreshingProvider::new(
+        rusoto_sts::WebIdentityProvider::from_k8s_env(),
+      )
+      .unwrap();
+      S3Client::new_with(rusoto_core::HttpClient::new().unwrap(), provider, region)
+    } else {
+      S3Client::new(region)
+    };
+
     Self {
-      s3: S3Client::new(region),
+      s3,
       bucket_name: env::var(OUTPUT_S3_BUCKET_ENV_KEY)
         .unwrap_or(DEFAULT_OUTPUT_BUCKET_NAME.to_string()),
     }
@@ -40,7 +51,7 @@ impl DataLake {
     let rand_key: u64 = random();
     let full_key = format!(
       "{}/{}.jsonl",
-      Utc::now().naive_utc(),
+      Utc::now().naive_utc().date(),
       hex::encode(rand_key.to_le_bytes())
     );
     let contents = contents.as_bytes().to_vec();
