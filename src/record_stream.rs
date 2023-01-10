@@ -132,6 +132,7 @@ impl KafkaRecordStream {
           .create_with_context(context)
           .unwrap(),
       ));
+      info!("Producing to topic: {}", topic);
     }
     if enable_consumer {
       let context = KafkaContext;
@@ -142,10 +143,15 @@ impl KafkaRecordStream {
           .set("enable.auto.commit", "false")
           .set("session.timeout.ms", "21000")
           .set("max.poll.interval.ms", "14400000")
-          .set("auto.offset.reset", "smallest")
+          .set("auto.offset.reset", "earliest")
           .set("queued.max.messages.kbytes", "300000")
           .create_with_context(context)
           .unwrap(),
+      );
+      info!(
+        "Consuming from topic: {} (current offsets: {:?})",
+        topic,
+        result.consumer.as_ref().unwrap().position().unwrap()
       );
       result
         .consumer

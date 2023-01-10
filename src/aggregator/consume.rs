@@ -11,7 +11,7 @@ use tokio::sync::Mutex;
 use tokio::task::JoinHandle;
 use tokio::time::sleep;
 
-const RECV_TIMEOUT_MS: u64 = 2500;
+const RECV_TIMEOUT_MS: u64 = 12500;
 
 fn create_recv_tasks(
   rec_streams: &Vec<RecordStreamArc>,

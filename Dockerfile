@@ -16,7 +16,8 @@ COPY ./Cargo.lock .
 
 COPY ./misc/rds_iam_bootstrap /usr/local/bin/
 
-RUN cargo install --path .
+RUN cargo build --release
+RUN cp ./target/release/constellation-processors /usr/local/bin/
 
 RUN cargo clean
 RUN rm -rf /usr/local/cargo/registry
