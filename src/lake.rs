@@ -47,6 +47,7 @@ impl DataLake {
     self
       .s3
       .put_object(PutObjectRequest {
+        acl: Some("bucket-owner-full-control".to_string()),
         body: Some(ByteStream::from(contents)),
         bucket: self.bucket_name.clone(),
         key: full_key,
