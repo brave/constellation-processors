@@ -13,8 +13,10 @@ use tokio::sync::Mutex;
 use tokio::task::JoinHandle;
 use tokio::time::sleep;
 
-const RECV_TIMEOUT_MS_ENV_KEY: &str = "RECV_TIMEOUT_MS";
-const DEFAULT_RECV_TIMEOUT_MS: &str = "2500";
+const MIN_RECV_TIMEOUT_MS_ENV_KEY: &str = "MIN_RECV_TIMEOUT_MS";
+const DEFAULT_MIN_RECV_TIMEOUT_MS: &str = "2500";
+const MAX_RECV_TIMEOUT_MS_ENV_KEY: &str = "MAX_RECV_TIMEOUT_MS";
+const DEFAULT_MAX_RECV_TIMEOUT_MS: &str = "30000";
 
 fn create_recv_tasks(
   rec_streams: &Vec<RecordStreamArc>,
@@ -25,9 +27,15 @@ fn create_recv_tasks(
   msg_count: Arc<Mutex<usize>>,
   msgs_to_collect_count: usize,
 ) -> Vec<JoinHandle<Result<(), AggregatorError>>> {
-  let recv_timeout = Duration::from_millis(
+  let min_recv_timeout = Duration::from_millis(
     u64::from_str(
-      &env::var(RECV_TIMEOUT_MS_ENV_KEY).unwrap_or(DEFAULT_RECV_TIMEOUT_MS.to_string()),
+      &env::var(MIN_RECV_TIMEOUT_MS_ENV_KEY).unwrap_or(DEFAULT_MIN_RECV_TIMEOUT_MS.to_string()),
+    )
+    .unwrap(),
+  );
+  let max_recv_timeout = Duration::from_millis(
+    u64::from_str(
+      &env::var(MAX_RECV_TIMEOUT_MS_ENV_KEY).unwrap_or(DEFAULT_MAX_RECV_TIMEOUT_MS.to_string()),
     )
     .unwrap(),
   );
@@ -38,6 +46,7 @@ fn create_recv_tasks(
       let raw_tx = raw_tx.clone();
       let msg_count = msg_count.clone();
       tokio::spawn(async move {
+        let mut total_wait_time = Duration::from_secs(0);
         loop {
           tokio::select! {
             msg_res = rec_stream.consume() => {
@@ -50,8 +59,14 @@ fn create_recv_tasks(
               }
               drop(msg_count);
             },
-            _ = sleep(recv_timeout) => {
-              break;
+            _ = sleep(min_recv_timeout) => {
+              total_wait_time += min_recv_timeout;
+              // if there are assigned partitions, wait only until the min_recv_timeout for a message.
+              // if there are not assigned partitions, wait until the max_recv_timeout to give
+              // the broker a chance to assign partitions.
+              if rec_stream.has_assigned_partitions()? || total_wait_time >= max_recv_timeout {
+                break;
+              }
             },
           }
         }

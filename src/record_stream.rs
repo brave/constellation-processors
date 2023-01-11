@@ -74,6 +74,8 @@ pub trait RecordStream {
 
   fn commit_producer_transaction(&self) -> Result<(), RecordStreamError>;
 
+  fn has_assigned_partitions(&self) -> Result<bool, RecordStreamError>;
+
   async fn produce(&self, record: &[u8]) -> Result<(), RecordStreamError>;
 
   async fn init_producer_queues(&self);
@@ -224,6 +226,13 @@ impl RecordStream for KafkaRecordStream {
     Ok(())
   }
 
+  fn has_assigned_partitions(&self) -> Result<bool, RecordStreamError> {
+    if let Some(consumer) = self.consumer.as_ref() {
+      return Ok(consumer.assignment()?.count() > 0);
+    }
+    Ok(false)
+  }
+
   async fn produce(&self, record: &[u8]) -> Result<(), RecordStreamError> {
     let producer = self.producer.as_ref().expect("Kafka producer not enabled");
     let record: FutureRecord<str, [u8]> = FutureRecord::to(&self.topic).payload(record);
@@ -331,6 +340,10 @@ impl RecordStream for TestRecordStream {
 
   fn commit_producer_transaction(&self) -> Result<(), RecordStreamError> {
     Ok(())
+  }
+
+  fn has_assigned_partitions(&self) -> Result<bool, RecordStreamError> {
+    Ok(true)
   }
 
   async fn produce(&self, record: &[u8]) -> Result<(), RecordStreamError> {
