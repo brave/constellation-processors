@@ -96,6 +96,7 @@ The `--output-measurements-to-stdout` switch can be used to output measurements 
 | KAFKA_ENCRYPTED_TOPIC | p3a-star-enc | No | Topic for storing protected messages. |
 | KAFKA_OUTPUT_TOPIC | p3a-star-out | No | Topic for storing recovered measurements. |
 | K_THRESHOLD | 100 | No | The selected _k_ threshold for the Constellation application. |
+| RECV_TIMEOUT_MS | 2500 | No | The maximum amount of time to wait for an encrypted message to be received. |
 
 ## Test client
 

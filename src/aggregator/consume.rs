@@ -4,6 +4,8 @@ use crate::record_stream::RecordStreamArc;
 use crate::star::parse_message;
 use futures::future::try_join_all;
 use star_constellation::api::NestedMessage;
+use std::env;
+use std::str::FromStr;
 use std::sync::Arc;
 use std::time::Duration;
 use tokio::sync::mpsc::{self, UnboundedSender};
@@ -11,7 +13,8 @@ use tokio::sync::Mutex;
 use tokio::task::JoinHandle;
 use tokio::time::sleep;
 
-const RECV_TIMEOUT_MS: u64 = 12500;
+const RECV_TIMEOUT_MS_ENV_KEY: &str = "RECV_TIMEOUT_MS";
+const DEFAULT_RECV_TIMEOUT_MS: &str = "2500";
 
 fn create_recv_tasks(
   rec_streams: &Vec<RecordStreamArc>,
@@ -22,6 +25,12 @@ fn create_recv_tasks(
   msg_count: Arc<Mutex<usize>>,
   msgs_to_collect_count: usize,
 ) -> Vec<JoinHandle<Result<(), AggregatorError>>> {
+  let recv_timeout = Duration::from_millis(
+    u64::from_str(
+      &env::var(RECV_TIMEOUT_MS_ENV_KEY).unwrap_or(DEFAULT_RECV_TIMEOUT_MS.to_string()),
+    )
+    .unwrap(),
+  );
   parsing_tasks
     .iter()
     .zip(rec_streams.iter().cloned().into_iter())
@@ -41,7 +50,7 @@ fn create_recv_tasks(
               }
               drop(msg_count);
             },
-            _ = sleep(Duration::from_millis(RECV_TIMEOUT_MS)) => {
+            _ = sleep(recv_timeout) => {
               break;
             },
           }
