@@ -104,10 +104,16 @@ pub struct KafkaRecordStream {
 
 impl KafkaRecordStream {
   pub fn new(enable_producer: bool, enable_consumer: bool, use_output_topic: bool) -> Self {
-    let topic = if use_output_topic {
-      env::var(KAFKA_OUT_TOPIC_ENV_KEY).unwrap_or(DEFAULT_OUT_KAFKA_TOPIC.to_string())
+    let (topic, group_id) = if use_output_topic {
+      (
+        env::var(KAFKA_OUT_TOPIC_ENV_KEY).unwrap_or(DEFAULT_OUT_KAFKA_TOPIC.to_string()),
+        "star-agg-dec",
+      )
     } else {
-      env::var(KAFKA_ENC_TOPIC_ENV_KEY).unwrap_or(DEFAULT_ENC_KAFKA_TOPIC.to_string())
+      (
+        env::var(KAFKA_ENC_TOPIC_ENV_KEY).unwrap_or(DEFAULT_ENC_KAFKA_TOPIC.to_string()),
+        "star-agg-enc",
+      )
     };
 
     let mut result = Self {
@@ -139,7 +145,7 @@ impl KafkaRecordStream {
       let mut config = Self::new_client_config();
       result.consumer = Some(
         config
-          .set("group.id", "star-agg")
+          .set("group.id", group_id)
           .set("enable.auto.commit", "false")
           .set("session.timeout.ms", "21000")
           .set("max.poll.interval.ms", "14400000")
