@@ -1,6 +1,6 @@
 FROM rust:1
 
-EXPOSE 8080
+EXPOSE 8080 9090
 
 WORKDIR /usr/src/app
 
