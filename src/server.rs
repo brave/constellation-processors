@@ -60,7 +60,7 @@ async fn main_handler(
     error!("Failed to push message: {}", e);
     Err(WebError::Internal)
   } else {
-    Ok("")
+    Ok(HttpResponse::NoContent().finish())
   }
 }
 

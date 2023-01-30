@@ -96,6 +96,10 @@ async fn metrics_handler(state: web::Data<Mutex<Registry>>) -> io::Result<HttpRe
   )
 }
 
+async fn health_check_handler() -> io::Result<HttpResponse> {
+  Ok(HttpResponse::NoContent().finish())
+}
+
 pub fn create_metric_server(registry: Registry, port: u16) -> io::Result<Server> {
   let state = web::Data::new(Mutex::new(registry));
   Ok(
@@ -103,6 +107,7 @@ pub fn create_metric_server(registry: Registry, port: u16) -> io::Result<Server>
       App::new()
         .app_data(state.clone())
         .service(web::resource("/metrics").route(web::get().to(metrics_handler)))
+        .service(web::resource("/health").route(web::get().to(health_check_handler)))
     })
     .bind(("0.0.0.0", port))?
     .run(),
