@@ -5,7 +5,7 @@ edition = "2021"
 
 [dependencies]
 star-constellation = { git = "https://github.com/brave/constellation", rev = "6c91f94d7b307f7dec08e1a86edcbf789d420185" }
-base64 = "0.20"
+base64 = "0.21"
 rand = "0.8"
 clap = { version = "4.0", features = ["derive"] }
 reqwest = "0.11"
