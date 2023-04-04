@@ -33,7 +33,7 @@ rusoto_core = "0.48"
 rusoto_s3 = "0.48"
 rusoto_credential = "0.48"
 rusoto_sts = "0.48"
-prometheus-client = "0.18"
+prometheus-client = "0.20"
 sentry = "0.29"
 jemallocator = "0.5"
 
