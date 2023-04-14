@@ -4,12 +4,12 @@ version = "0.1.0"
 edition = "2021"
 
 [dependencies]
-star-constellation = { git = "https://github.com/brave/constellation", rev = "6c91f94d7b307f7dec08e1a86edcbf789d420185" }
-base64 = "0.20"
+star-constellation = { git = "https://github.com/brave/constellation", rev = "b6b8396abd98cc87a187e051c32a291c9faa43f7" }
+base64 = "0.21"
 rand = "0.8"
-clap = { version = "4.0", features = ["derive"] }
+clap = { version = "4.2", features = ["derive"] }
 reqwest = "0.11"
-tokio = { version = "1", features = ["full"] }
+tokio = { version = "1.27", features = ["full"] }
 futures = "0.3"
 csv = "1.2"
 

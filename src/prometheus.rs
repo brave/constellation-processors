@@ -1,9 +1,11 @@
+use actix_web::error::InternalError;
 use actix_web::{dev::Server, web, App, HttpResponse, HttpServer};
 use prometheus_client::encoding::text::encode;
 use prometheus_client::metrics::counter::Counter;
 use prometheus_client::metrics::gauge::Gauge;
 use prometheus_client::metrics::histogram::{exponential_buckets, Histogram};
 use prometheus_client::registry::Registry;
+use reqwest::StatusCode;
 use std::io;
 use std::time::Duration;
 use tokio::sync::Mutex;
@@ -39,17 +41,17 @@ impl WebMetrics {
     registry.register(
       "api_requests_total",
       "Number of total requests",
-      Box::new(self.total_requests.clone()),
+      self.total_requests.clone(),
     );
     registry.register(
       "in_flight_requests",
       "Number of requests currently being served",
-      Box::new(self.in_flight_requests.clone()),
+      self.in_flight_requests.clone(),
     );
     registry.register(
       "request_duration_seconds",
       "Histogram of latencies for requests",
-      Box::new(self.request_duration.clone()),
+      self.request_duration.clone(),
     );
   }
 }
@@ -67,28 +69,28 @@ impl DataLakeMetrics {
 
   pub fn records_flushed(&self, count: usize) {
     self.records_saved_total.inc_by(count as u64);
-    self.batch_record_total.dec_by(count as u64);
+    self.batch_record_total.dec_by(count as i64);
   }
 
   pub fn register_metrics(&self, registry: &mut Registry) {
     registry.register(
       "records_saved_total",
       "Number of total records saved to the data lake",
-      Box::new(self.records_saved_total.clone()),
+      self.records_saved_total.clone(),
     );
     registry.register(
       "batch_record_total",
       "Number of total records stored in memory, waiting to be saved to data lake",
-      Box::new(self.batch_record_total.clone()),
+      self.batch_record_total.clone(),
     );
   }
 }
 
-async fn metrics_handler(state: web::Data<Mutex<Registry>>) -> io::Result<HttpResponse> {
+async fn metrics_handler(state: web::Data<Mutex<Registry>>) -> actix_web::Result<HttpResponse> {
   let registry = state.lock().await;
-  let mut buffer = vec![];
-  encode(&mut buffer, &registry)?;
-  let body = std::str::from_utf8(buffer.as_slice()).unwrap().to_string();
+  let mut body: String = String::new();
+  encode(&mut body, &registry)
+    .map_err(|v| InternalError::new(v, StatusCode::INTERNAL_SERVER_ERROR))?;
   Ok(
     HttpResponse::Ok()
       .content_type("application/openmetrics-text; version=1.0.0; charset=utf-8")

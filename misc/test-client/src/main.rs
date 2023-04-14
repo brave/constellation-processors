@@ -1,3 +1,4 @@
+use base64::{engine::general_purpose as base64_engine, Engine as _};
 use clap::Parser;
 use futures::future::try_join_all;
 use rand::{thread_rng, Rng};
@@ -56,7 +57,7 @@ fn generate_messages(layers: &[Vec<u8>], cli_args: &CliArgs, count: usize) -> Ve
       } = rnd_fetcher.eval(&req_slice_vec, cli_args.epoch).unwrap();
 
       let points_slice_vec: Vec<&[u8]> = serialized_points.iter().map(|v| v.as_slice()).collect();
-      base64::encode(
+      base64_engine::STANDARD.encode(
         client::construct_message(
           &points_slice_vec,
           None,
