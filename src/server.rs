@@ -9,6 +9,7 @@ use actix_web::{
   web::{self, Data},
   App, HttpResponse, HttpServer, Responder,
 };
+use base64::{engine::general_purpose as base64_engine, Engine as _};
 use derive_more::{Display, Error, From};
 use futures::{future::try_join, FutureExt, TryFutureExt};
 use prometheus_client::registry::Registry;
@@ -54,7 +55,7 @@ async fn main_handler(
   state: Data<ServerState>,
 ) -> Result<impl Responder, WebError> {
   let body_str = from_utf8(&body)?.trim();
-  let bincode_msg = base64::decode(body_str)?;
+  let bincode_msg = base64_engine::STANDARD.decode(body_str)?;
   parse_message(&bincode_msg)?;
   if let Err(e) = state.rec_stream.produce(&bincode_msg).await {
     error!("Failed to push message: {}", e);
