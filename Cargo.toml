@@ -34,7 +34,7 @@ rusoto_s3 = "0.48"
 rusoto_credential = "0.48"
 rusoto_sts = "0.48"
 prometheus-client = "0.20"
-sentry = "0.30"
+sentry = "0.31"
 jemallocator = "0.5"
 
 [profile.dev]
