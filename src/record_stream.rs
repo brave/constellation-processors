@@ -28,6 +28,7 @@ const DEFAULT_OUT_KAFKA_TOPIC: &str = "p3a-star-out";
 const KAFKA_BROKERS_ENV_KEY: &str = "KAFKA_BROKERS";
 const KAFKA_ENABLE_PLAINTEXT_ENV_KEY: &str = "KAFKA_ENABLE_PLAINTEXT";
 const KAFKA_PRODUCER_QUEUE_TASK_COUNT_ENV_KEY: &str = "KAFKA_PRODUCE_QUEUE_TASK_COUNT";
+const KAFKA_TLS_CA_CERT_PATH_ENV_KEY: &str = "KAFKA_TLS_CA_CERT_PATH";
 const KAFKA_TLS_CERT_PATH_ENV_KEY: &str = "KAFKA_TLS_CERT_PATH";
 const KAFKA_TLS_KEY_PATH_ENV_KEY: &str = "KAFKA_TLS_KEY_PATH";
 const DEFAULT_KAFKA_PRODUCER_QUEUE_TASK_COUNT: &str = "64";
@@ -183,6 +184,9 @@ impl KafkaRecordStream {
       result
         .set("security.protocol", "ssl")
         .set("ssl.certificate.location", cert_path);
+    }
+    if let Ok(cert_path) = env::var(KAFKA_TLS_CA_CERT_PATH_ENV_KEY) {
+      result.set("ssl.ca.location", cert_path);
     }
     if let Ok(key_path) = env::var(KAFKA_TLS_KEY_PATH_ENV_KEY) {
       result.set("ssl.key.location", key_path);
