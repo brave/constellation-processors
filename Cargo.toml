@@ -9,7 +9,7 @@ sta-rs = { git = "https://github.com/brave/sta-rs", rev = "b08701396b4beaeec1b12
 actix-web = "4"
 env_logger = "0.10"
 log = "0.4"
-tokio = { version = "1.27", features = ["full"] }
+tokio = { version = "1.28", features = ["full"] }
 futures = "0.3"
 futures-core = "0.3"
 dotenv = "0.15"
