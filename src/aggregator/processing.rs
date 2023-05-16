@@ -2,7 +2,7 @@ use super::group::GroupedMessages;
 use super::recovered::RecoveredMessages;
 use super::report::report_measurements;
 use super::AggregatorError;
-use crate::epoch::is_epoch_expired;
+use crate::epoch::{is_epoch_expired, EpochConfig};
 use crate::models::{DBConnection, DBPool, DBStorageConnections, PendingMessage, RecoveredMessage};
 use crate::profiler::{Profiler, ProfilerStat};
 use crate::record_stream::{DynRecordStream, RecordStreamArc};
@@ -14,13 +14,13 @@ use tokio::task::JoinHandle;
 
 pub async fn process_expired_epochs(
   conn: Arc<Mutex<DBConnection>>,
-  current_epoch: u8,
+  epoch_config: &EpochConfig,
   out_stream: Option<&DynRecordStream>,
   profiler: Arc<Profiler>,
 ) -> Result<(), AggregatorError> {
   let epochs = RecoveredMessage::list_distinct_epochs(conn.clone()).await?;
   for epoch in epochs {
-    if !is_epoch_expired(epoch as u8, current_epoch) {
+    if !is_epoch_expired(epoch_config, epoch as u8) {
       continue;
     }
     info!("Detected expired epoch '{}', processing...", epoch);
@@ -31,6 +31,7 @@ pub async fn process_expired_epochs(
 
     report_measurements(
       &mut rec_msgs,
+      epoch_config,
       epoch as u8,
       true,
       out_stream,
@@ -141,6 +142,7 @@ pub fn start_subtask(
   out_stream: Option<RecordStreamArc>,
   mut grouped_msgs: GroupedMessages,
   k_threshold: usize,
+  epoch_config: Arc<EpochConfig>,
   profiler: Arc<Profiler>,
 ) -> JoinHandle<i64> {
   tokio::spawn(async move {
@@ -205,6 +207,7 @@ pub fn start_subtask(
     for epoch in rec_epochs {
       measurements_count += report_measurements(
         &mut rec_msgs,
+        epoch_config.as_ref(),
         epoch,
         false,
         out_stream.as_ref().map(|v| v.as_ref()),

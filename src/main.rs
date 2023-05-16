@@ -11,9 +11,12 @@ mod server;
 mod star;
 
 use aggregator::start_aggregation;
+use chrono::Duration;
 use clap::{ArgGroup, Parser};
 use dotenv::dotenv;
 use env_logger::Env;
+use epoch::CurrentEpochInfo;
+use epoch::EpochConfig;
 use futures::future::try_join_all;
 use lakesink::start_lakesink;
 use prometheus::{create_metric_server, DataLakeMetrics};
@@ -70,6 +73,16 @@ struct CliArgs {
     help = "Max messages to consume per aggregator iteration"
   )]
   agg_msg_collect_count: usize,
+
+  #[clap(long, default_value = "604800", help = "Epoch length in seconds")]
+  epoch_length_secs: usize,
+
+  #[clap(
+    long,
+    default_value = "wos",
+    help = "Epoch date field to use when storing results"
+  )]
+  epoch_date_field_name: String,
 
   #[clap(long, default_value = "3", help = "Max iterations for aggregator")]
   agg_iterations: usize,
@@ -128,12 +141,23 @@ async fn main() {
   }
 
   if cli_args.aggregator {
+    let epoch_length = Duration::seconds(cli_args.epoch_length_secs as i64);
+    let current_epoch = if let Some(epoch) = cli_args.test_epoch {
+      CurrentEpochInfo::test_info(epoch, epoch_length)
+    } else {
+      CurrentEpochInfo::retrieve().await
+    };
+    let epoch_config = Arc::new(EpochConfig {
+      current_epoch,
+      epoch_length,
+      epoch_date_field_name: cli_args.epoch_date_field_name,
+    });
     start_aggregation(
       cli_args.agg_worker_count,
       cli_args.agg_msg_collect_count,
       cli_args.agg_iterations,
       cli_args.output_measurements_to_stdout,
-      cli_args.test_epoch,
+      epoch_config,
     )
     .await
     .unwrap();
