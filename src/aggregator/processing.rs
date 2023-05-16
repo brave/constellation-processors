@@ -20,7 +20,7 @@ pub async fn process_expired_epochs(
 ) -> Result<(), AggregatorError> {
   let epochs = RecoveredMessage::list_distinct_epochs(conn.clone()).await?;
   for epoch in epochs {
-    if !is_epoch_expired(epoch as u8, epoch_config.current_epoch.epoch) {
+    if !is_epoch_expired(epoch_config, epoch as u8) {
       continue;
     }
     info!("Detected expired epoch '{}', processing...", epoch);

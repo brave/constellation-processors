@@ -50,8 +50,9 @@ impl CurrentEpochInfo {
   }
 }
 
-pub fn is_epoch_expired(epoch: u8, mut current_epoch: u8) -> bool {
+pub fn is_epoch_expired(config: &EpochConfig, epoch: u8) -> bool {
   let mut diff = 0;
+  let mut current_epoch = config.current_epoch.epoch;
   if !(FIRST_EPOCH..=LAST_EPOCH).contains(&current_epoch) {
     return true;
   }
@@ -87,7 +88,7 @@ mod tests {
 
   #[test]
   fn survey_date() {
-    let epoch_length = Duration::seconds(604800);
+    let epoch_length = Duration::weeks(1);
     let epoch_config = EpochConfig {
       current_epoch: CurrentEpochInfo {
         epoch: 2,

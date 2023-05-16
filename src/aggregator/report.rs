@@ -139,6 +139,7 @@ pub async fn report_measurements(
 #[cfg(test)]
 mod tests {
   use chrono::{Duration, Utc};
+  use serde_json::json;
 
   use super::*;
   use crate::epoch::CurrentEpochInfo;
@@ -244,19 +245,11 @@ mod tests {
     assert_eq!(records.len(), 2);
     assert_eq!(
       records[0],
-      serde_json::from_str::<serde_json::Value>(&format!(
-        "{{\"a\":\"1\",\"b\":\"2\",\"c\":\"3\",\"count\":\"7\",\"wos\":\"{}\"}}",
-        date
-      ))
-      .unwrap()
+      json!({ "a": "1", "b": "2", "c": "3", "count": "7", "wos": date })
     );
     assert_eq!(
       records[1],
-      serde_json::from_str::<serde_json::Value>(&format!(
-        "{{\"a\":\"1\",\"b\":\"2\",\"c\":\"4\",\"count\":\"10\",\"wos\":\"{}\"}}",
-        date
-      ))
-      .unwrap()
+      json!({ "a": "1", "b": "2", "c": "4", "count": "10", "wos": date })
     );
 
     let rec_epoch_map = recovered_msgs.map.get(&1).unwrap();
@@ -352,28 +345,13 @@ mod tests {
     assert_eq!(records.len(), 3);
     assert_eq!(
       records[0],
-      serde_json::from_str::<serde_json::Value>(&format!(
-        "{{\"a\":\"1\",\"b\":\"3\",\"count\":\"25\",\"wos\":\"{}\"}}",
-        date
-      ))
-      .unwrap()
+      json!({ "a": "1", "b": "3", "count": "25", "wos": date }),
     );
     assert_eq!(
       records[1],
-      serde_json::from_str::<serde_json::Value>(&format!(
-        "{{\"a\":\"1\",\"b\":\"2\",\"count\":\"27\",\"wos\":\"{}\"}}",
-        date
-      ))
-      .unwrap()
+      json!({ "a": "1", "b": "2", "count": "27", "wos": date }),
     );
-    assert_eq!(
-      records[2],
-      serde_json::from_str::<serde_json::Value>(&format!(
-        "{{\"a\":\"1\",\"count\":\"30\",\"wos\":\"{}\"}}",
-        date
-      ))
-      .unwrap()
-    );
+    assert_eq!(records[2], json!({ "a": "1", "count": "30", "wos": date }));
 
     let rec_epoch_map = recovered_msgs.map.get(&2).unwrap();
     assert_eq!(rec_epoch_map.get(&vec![51; 20]).unwrap().count, 0);
