@@ -1,5 +1,6 @@
 use super::recovered::RecoveredMessages;
 use super::AggregatorError;
+use crate::epoch::{get_epoch_survey_date, EpochConfig};
 use crate::profiler::{Profiler, ProfilerStat};
 use crate::record_stream::DynRecordStream;
 use futures::future::{BoxFuture, FutureExt};
@@ -10,6 +11,8 @@ use std::time::Instant;
 
 fn build_full_measurement_json(
   metric_chain: Vec<(String, String)>,
+  epoch_date_field_name: &str,
+  epoch_start_date: &str,
   count: i64,
 ) -> Result<Vec<u8>, AggregatorError> {
   let mut full_measurement = HashMap::new();
@@ -17,12 +20,18 @@ fn build_full_measurement_json(
     full_measurement.insert(metric.0, metric.1);
   }
   full_measurement.insert("count".to_string(), count.to_string());
+  full_measurement.insert(
+    epoch_date_field_name.to_string(),
+    epoch_start_date.to_string(),
+  );
   Ok(serde_json::to_vec(&full_measurement)?)
 }
 
 fn report_measurements_recursive<'a>(
   rec_msgs: &'a mut RecoveredMessages,
   epoch: u8,
+  epoch_date_field_name: &'a str,
+  epoch_start_date: &'a str,
   partial_report: bool,
   out_stream: Option<&'a DynRecordStream>,
   metric_chain: Vec<(String, String)>,
@@ -44,10 +53,13 @@ fn report_measurements_recursive<'a>(
       metric_chain.push((msg.metric_name.clone(), msg.metric_value.clone()));
 
       // is_msmt_final: true if the current measurement should be reported right now
+      // i.e. all layers have been recovered
       let is_msmt_final = if msg.has_children {
         let children_rec_count = report_measurements_recursive(
           rec_msgs,
           epoch,
+          epoch_date_field_name,
+          epoch_start_date,
           partial_report,
           out_stream,
           metric_chain.clone(),
@@ -75,7 +87,12 @@ fn report_measurements_recursive<'a>(
 
       if is_msmt_final {
         recovered_count += msg.count;
-        let full_msmt = build_full_measurement_json(metric_chain, msg.count)?;
+        let full_msmt = build_full_measurement_json(
+          metric_chain,
+          epoch_date_field_name,
+          epoch_start_date,
+          msg.count,
+        )?;
         let start_instant = Instant::now();
         match out_stream {
           Some(o) => o.queue_produce(full_msmt).await?,
@@ -96,15 +113,19 @@ fn report_measurements_recursive<'a>(
 
 pub async fn report_measurements(
   rec_msgs: &mut RecoveredMessages,
+  epoch_config: &EpochConfig,
   epoch: u8,
   partial_report: bool,
   out_stream: Option<&DynRecordStream>,
   profiler: Arc<Profiler>,
 ) -> Result<i64, AggregatorError> {
+  let epoch_start_date = get_epoch_survey_date(&epoch_config, epoch);
   Ok(
     report_measurements_recursive(
       rec_msgs,
       epoch,
+      &epoch_config.epoch_date_field_name,
+      &epoch_start_date,
       partial_report,
       out_stream,
       Vec::new(),
@@ -117,10 +138,26 @@ pub async fn report_measurements(
 
 #[cfg(test)]
 mod tests {
+  use chrono::{Duration, Utc};
+
   use super::*;
+  use crate::epoch::CurrentEpochInfo;
   use crate::models::RecoveredMessage;
   use crate::record_stream::TestRecordStream;
   use std::str::FromStr;
+
+  fn test_epoch_config(epoch: u8) -> EpochConfig {
+    let epoch_length = Duration::seconds(604800);
+    EpochConfig {
+      current_epoch: CurrentEpochInfo::test_info(epoch, epoch_length),
+      epoch_date_field_name: "wos".to_string(),
+      epoch_length,
+    }
+  }
+
+  fn expected_date() -> String {
+    Utc::now().date_naive().to_string()
+  }
 
   #[tokio::test]
   async fn full_report() {
@@ -191,6 +228,7 @@ mod tests {
     }
     let rec_count = report_measurements(
       &mut recovered_msgs,
+      &test_epoch_config(2),
       2,
       false,
       Some(&record_stream),
@@ -202,19 +240,22 @@ mod tests {
     assert_eq!(rec_count, 17);
     let records = parse_and_sort_records(record_stream.records_produced.into_inner());
 
+    let date = expected_date();
     assert_eq!(records.len(), 2);
     assert_eq!(
       records[0],
-      serde_json::from_str::<serde_json::Value>(
-        "{\"a\":\"1\",\"b\":\"2\",\"c\":\"3\",\"count\":\"7\"}"
-      )
+      serde_json::from_str::<serde_json::Value>(&format!(
+        "{{\"a\":\"1\",\"b\":\"2\",\"c\":\"3\",\"count\":\"7\",\"wos\":\"{}\"}}",
+        date
+      ))
       .unwrap()
     );
     assert_eq!(
       records[1],
-      serde_json::from_str::<serde_json::Value>(
-        "{\"a\":\"1\",\"b\":\"2\",\"c\":\"4\",\"count\":\"10\"}"
-      )
+      serde_json::from_str::<serde_json::Value>(&format!(
+        "{{\"a\":\"1\",\"b\":\"2\",\"c\":\"4\",\"count\":\"10\",\"wos\":\"{}\"}}",
+        date
+      ))
       .unwrap()
     );
 
@@ -294,26 +335,44 @@ mod tests {
     for rec_msg in new_rec_msgs {
       recovered_msgs.add(rec_msg);
     }
-    report_measurements(&mut recovered_msgs, 2, true, Some(&record_stream), profiler)
-      .await
-      .unwrap();
+    report_measurements(
+      &mut recovered_msgs,
+      &test_epoch_config(2),
+      2,
+      true,
+      Some(&record_stream),
+      profiler,
+    )
+    .await
+    .unwrap();
 
     let records = parse_and_sort_records(record_stream.records_produced.into_inner());
 
+    let date = expected_date();
     assert_eq!(records.len(), 3);
     assert_eq!(
       records[0],
-      serde_json::from_str::<serde_json::Value>("{\"a\":\"1\",\"b\":\"3\",\"count\":\"25\"}")
-        .unwrap()
+      serde_json::from_str::<serde_json::Value>(&format!(
+        "{{\"a\":\"1\",\"b\":\"3\",\"count\":\"25\",\"wos\":\"{}\"}}",
+        date
+      ))
+      .unwrap()
     );
     assert_eq!(
       records[1],
-      serde_json::from_str::<serde_json::Value>("{\"a\":\"1\",\"b\":\"2\",\"count\":\"27\"}")
-        .unwrap()
+      serde_json::from_str::<serde_json::Value>(&format!(
+        "{{\"a\":\"1\",\"b\":\"2\",\"count\":\"27\",\"wos\":\"{}\"}}",
+        date
+      ))
+      .unwrap()
     );
     assert_eq!(
       records[2],
-      serde_json::from_str::<serde_json::Value>("{\"a\":\"1\",\"count\":\"30\"}").unwrap()
+      serde_json::from_str::<serde_json::Value>(&format!(
+        "{{\"a\":\"1\",\"count\":\"30\",\"wos\":\"{}\"}}",
+        date
+      ))
+      .unwrap()
     );
 
     let rec_epoch_map = recovered_msgs.map.get(&2).unwrap();

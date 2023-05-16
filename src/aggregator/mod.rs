@@ -4,7 +4,7 @@ mod processing;
 mod recovered;
 mod report;
 
-use crate::epoch::get_current_epoch;
+use crate::epoch::EpochConfig;
 use crate::models::{
   begin_db_transaction, commit_db_transaction, DBPool, DBStorageConnections, PgStoreError,
 };
@@ -64,14 +64,9 @@ pub async fn start_aggregation(
   msg_collect_count: usize,
   iterations: usize,
   output_measurements_to_stdout: bool,
-  test_epoch: Option<u8>,
+  epoch_config: Arc<EpochConfig>,
 ) -> Result<(), AggregatorError> {
-  let current_epoch = if let Some(epoch) = test_epoch {
-    epoch
-  } else {
-    get_current_epoch().await
-  };
-  info!("Current epoch is {}", current_epoch);
+  info!("Current epoch is {}", epoch_config.current_epoch.epoch);
 
   let k_threshold =
     usize::from_str(&env::var(K_THRESHOLD_ENV_KEY).unwrap_or(K_THRESHOLD_DEFAULT.to_string()))
@@ -132,6 +127,7 @@ pub async fn start_aggregation(
         out_stream.clone(),
         grouped_msgs,
         k_threshold,
+        epoch_config.clone(),
         profiler.clone(),
       ));
     }
@@ -174,7 +170,7 @@ pub async fn start_aggregation(
   begin_db_transaction(db_conn.clone())?;
   process_expired_epochs(
     db_conn.clone(),
-    current_epoch,
+    &epoch_config,
     out_stream.as_ref().map(|v| v.as_ref()),
     profiler.clone(),
   )
