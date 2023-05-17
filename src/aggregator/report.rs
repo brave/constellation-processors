@@ -4,13 +4,14 @@ use crate::epoch::{get_epoch_survey_date, EpochConfig};
 use crate::profiler::{Profiler, ProfilerStat};
 use crate::record_stream::DynRecordStream;
 use futures::future::{BoxFuture, FutureExt};
+use serde_json::Value;
 use std::collections::HashMap;
 use std::str::from_utf8;
 use std::sync::Arc;
 use std::time::Instant;
 
 fn build_full_measurement_json(
-  metric_chain: Vec<(String, String)>,
+  metric_chain: Vec<(String, Value)>,
   epoch_date_field_name: &str,
   epoch_start_date: &str,
   count: i64,
@@ -19,10 +20,10 @@ fn build_full_measurement_json(
   for metric in metric_chain {
     full_measurement.insert(metric.0, metric.1);
   }
-  full_measurement.insert("total".to_string(), count.to_string());
+  full_measurement.insert("total".to_string(), count.into());
   full_measurement.insert(
     epoch_date_field_name.to_string(),
-    epoch_start_date.to_string(),
+    epoch_start_date.to_string().into(),
   );
   Ok(serde_json::to_vec(&full_measurement)?)
 }
@@ -34,7 +35,7 @@ fn report_measurements_recursive<'a>(
   epoch_start_date: &'a str,
   partial_report: bool,
   out_stream: Option<&'a DynRecordStream>,
-  metric_chain: Vec<(String, String)>,
+  metric_chain: Vec<(String, Value)>,
   parent_msg_tag: Option<Vec<u8>>,
   profiler: Arc<Profiler>,
 ) -> BoxFuture<'a, Result<i64, AggregatorError>> {
@@ -50,7 +51,7 @@ fn report_measurements_recursive<'a>(
       }
 
       let mut metric_chain = metric_chain.clone();
-      metric_chain.push((msg.metric_name.clone(), msg.metric_value.clone()));
+      metric_chain.push((msg.metric_name.clone(), msg.metric_value.clone().into()));
 
       // is_msmt_final: true if the current measurement should be reported right now
       // i.e. all layers have been recovered
@@ -145,7 +146,6 @@ mod tests {
   use crate::epoch::CurrentEpochInfo;
   use crate::models::RecoveredMessage;
   use crate::record_stream::TestRecordStream;
-  use std::str::FromStr;
 
   fn test_epoch_config(epoch: u8) -> EpochConfig {
     let epoch_length = Duration::seconds(604800);
@@ -245,11 +245,11 @@ mod tests {
     assert_eq!(records.len(), 2);
     assert_eq!(
       records[0],
-      json!({ "a": "1", "b": "2", "c": "3", "total": "7", "wos": date })
+      json!({ "a": "1", "b": "2", "c": "3", "total": 7, "wos": date })
     );
     assert_eq!(
       records[1],
-      json!({ "a": "1", "b": "2", "c": "4", "total": "10", "wos": date })
+      json!({ "a": "1", "b": "2", "c": "4", "total": 10, "wos": date })
     );
 
     let rec_epoch_map = recovered_msgs.map.get(&1).unwrap();
@@ -345,13 +345,13 @@ mod tests {
     assert_eq!(records.len(), 3);
     assert_eq!(
       records[0],
-      json!({ "a": "1", "b": "3", "total": "25", "wos": date }),
+      json!({ "a": "1", "b": "3", "total": 25, "wos": date }),
     );
     assert_eq!(
       records[1],
-      json!({ "a": "1", "b": "2", "total": "27", "wos": date })
+      json!({ "a": "1", "b": "2", "total": 27, "wos": date })
     );
-    assert_eq!(records[2], json!({ "a": "1", "total": "30", "wos": date }));
+    assert_eq!(records[2], json!({ "a": "1", "total": 30, "wos": date }));
 
     let rec_epoch_map = recovered_msgs.map.get(&2).unwrap();
     assert_eq!(rec_epoch_map.get(&vec![51; 20]).unwrap().count, 0);
@@ -365,8 +365,8 @@ mod tests {
       .map(|v| serde_json::from_slice(&v).unwrap())
       .collect();
     result.sort_by(|a, b| {
-      let a_num = usize::from_str(a.get("total").unwrap().as_str().unwrap()).unwrap();
-      let b_num = usize::from_str(b.get("total").unwrap().as_str().unwrap()).unwrap();
+      let a_num = a.get("total").unwrap().as_i64().unwrap();
+      let b_num = b.get("total").unwrap().as_i64().unwrap();
       a_num.cmp(&b_num)
     });
     result
