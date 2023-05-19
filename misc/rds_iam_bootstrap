@@ -19,3 +19,7 @@ DATABASE_PASSWORD="$(aws rds generate-db-auth-token \
 export DATABASE_URL="postgres://$DATABASE_USER:$DATABASE_PASSWORD@$DATABASE_HOST/$DATABASE_INSTANCE"
 
 constellation-processors $@
+
+# stop the db if possible
+[ -n "$DATABASE_STATE_MACHINE_ARN" ] && \
+  aws stepfunctions start-execution --state-machine-arn "$DATABASE_STATE_MACHINE_ARN" --input '{"database": "stop"}' --no-paginate
