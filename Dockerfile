@@ -9,6 +9,9 @@ RUN unzip awscliv2.zip
 RUN ./aws/install
 RUN rm -rf ./aws
 
+# install paginator for aws stepfunctions cli
+RUN apt update && apt install -y less
+
 COPY ./src ./src
 COPY ./migrations ./migrations
 COPY ./Cargo.toml .
