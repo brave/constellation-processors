@@ -164,6 +164,7 @@ pub async fn start_aggregation(
   let profiler = Arc::new(Profiler::default());
   let mut out_stream = create_output_stream(output_measurements_to_stdout)?;
   if let Some(out_stream) = out_stream.as_mut() {
+    out_stream.init_producer_queues().await;
     out_stream.begin_producer_transaction()?;
   }
   let db_conn = Arc::new(Mutex::new(db_pool.get().await?));
