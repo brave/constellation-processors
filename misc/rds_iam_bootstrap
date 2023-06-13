@@ -22,5 +22,6 @@ export DATABASE_URL="postgres://$DATABASE_USER:$DATABASE_PASSWORD@$DATABASE_HOST
 constellation-processors $@
 
 # stop the db if possible
-[ -n "$DATABASE_STATE_MACHINE_ARN" ] && \
+if [ -n "$DATABASE_STATE_MACHINE_ARN" ]; then
   aws stepfunctions start-execution --state-machine-arn "$DATABASE_STATE_MACHINE_ARN" --input '{"database": "stop"}' --no-paginate
+fi
