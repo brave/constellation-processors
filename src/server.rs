@@ -1,4 +1,6 @@
-use crate::prometheus::{create_metric_server, WebMetrics};
+use crate::prometheus::{
+  create_metric_server, InflightMetricLabels, TotalMetricLabels, WebMetrics,
+};
 use crate::record_stream::{KafkaRecordStream, RecordStreamArc};
 use crate::star::{parse_message, AppSTARError};
 use actix_web::{
@@ -11,7 +13,7 @@ use actix_web::{
 };
 use base64::{engine::general_purpose as base64_engine, Engine as _};
 use derive_more::{Display, Error, From};
-use futures::{future::try_join, FutureExt, TryFutureExt};
+use futures::{future::try_join, FutureExt};
 use prometheus_client::registry::Registry;
 use std::str::{from_utf8, Utf8Error};
 use std::sync::Arc;
@@ -79,26 +81,32 @@ pub async fn start_server(worker_count: usize) -> std::io::Result<()> {
   let main_server = HttpServer::new(move || {
     App::new()
       .app_data(state.clone())
-      .wrap_fn(|req, srv| {
-        let web_metrics = req
+      .wrap_fn(|request, srv| {
+        let web_metrics = request
           .app_data::<Data<ServerState>>()
           .unwrap()
           .web_metrics
           .clone();
-        let web_metrics_err = web_metrics.clone();
 
-        web_metrics.request_start();
+        let inflight_metric_labels = InflightMetricLabels::from(&request);
+        web_metrics.request_start(&inflight_metric_labels);
+
         let start_time = Instant::now();
-        srv
-          .call(req)
-          .map(move |res| {
-            web_metrics.request_end(Some(start_time.elapsed()));
-            res
-          })
-          .map_err(move |err| {
-            web_metrics_err.request_end(None);
-            err
-          })
+
+        srv.call(request).map(move |result| {
+          let status_code = match result.as_ref() {
+            Ok(response) => response.status(),
+            Err(err) => err.as_response_error().status_code(),
+          };
+          let total_metric_labels = TotalMetricLabels::from((&inflight_metric_labels, status_code));
+          web_metrics.request_end(
+            &inflight_metric_labels,
+            &total_metric_labels,
+            start_time.elapsed(),
+          );
+
+          result
+        })
       })
       .service(main_handler)
   })
