@@ -1,7 +1,10 @@
+use actix_web::dev::ServiceRequest;
 use actix_web::error::InternalError;
 use actix_web::{dev::Server, web, App, HttpResponse, HttpServer};
 use prometheus_client::encoding::text::encode;
+use prometheus_client::encoding::EncodeLabelSet;
 use prometheus_client::metrics::counter::Counter;
+use prometheus_client::metrics::family::Family;
 use prometheus_client::metrics::gauge::Gauge;
 use prometheus_client::metrics::histogram::{exponential_buckets, Histogram};
 use prometheus_client::registry::Registry;
@@ -11,35 +14,83 @@ use std::time::Duration;
 use tokio::sync::Mutex;
 
 pub struct WebMetrics {
-  total_requests: Counter,
-  in_flight_requests: Gauge,
-  request_duration: Histogram,
+  total_requests: Family<TotalMetricLabels, Counter>,
+  in_flight_requests: Family<InflightMetricLabels, Gauge>,
+  request_duration: Family<TotalMetricLabels, Histogram>,
+}
+
+#[derive(Debug, Clone, Hash, PartialEq, Eq, EncodeLabelSet)]
+pub struct InflightMetricLabels {
+  method: String,
+  path: String,
+}
+
+#[derive(Debug, Clone, Hash, PartialEq, Eq, EncodeLabelSet)]
+pub struct TotalMetricLabels {
+  method: String,
+  path: String,
+  status: u16,
+}
+
+impl From<&ServiceRequest> for InflightMetricLabels {
+  fn from(request: &ServiceRequest) -> Self {
+    Self {
+      method: request.method().to_string(),
+      path: request.path().to_string(),
+    }
+  }
+}
+
+impl From<(&InflightMetricLabels, StatusCode)> for TotalMetricLabels {
+  fn from(value: (&InflightMetricLabels, StatusCode)) -> Self {
+    Self {
+      method: value.0.method.clone(),
+      path: value.0.path.clone(),
+      status: value.1.as_u16(),
+    }
+  }
 }
 
 impl WebMetrics {
   pub fn new() -> Self {
     Self {
-      total_requests: Counter::default(),
-      in_flight_requests: Gauge::default(),
-      request_duration: Histogram::new(exponential_buckets(0.01, 2., 8)),
+      total_requests: Family::default(),
+      in_flight_requests: Family::default(),
+      request_duration: Family::new_with_constructor(|| {
+        Histogram::new(exponential_buckets(0.01, 2., 8))
+      }),
     }
   }
 
-  pub fn request_start(&self) {
-    self.total_requests.inc();
-    self.in_flight_requests.inc();
+  pub fn request_start(&self, labels: &InflightMetricLabels) {
+    self.in_flight_requests.get_or_create(labels).inc();
   }
 
-  pub fn request_end(&self, success_duration: Option<Duration>) {
-    self.in_flight_requests.dec();
-    if let Some(d) = success_duration {
-      self.request_duration.observe(d.as_secs_f64());
-    }
+  pub fn request_end(
+    &self,
+    inflight_labels: &InflightMetricLabels,
+    total_labels: &TotalMetricLabels,
+    request_duration: Duration,
+  ) {
+    match total_labels.status == 404 {
+      true => {
+        // Remove unknown labels from metrics to avoid pollution
+        self.in_flight_requests.remove(inflight_labels);
+      }
+      false => {
+        self.in_flight_requests.get_or_create(inflight_labels).dec();
+        self
+          .request_duration
+          .get_or_create(total_labels)
+          .observe(request_duration.as_secs_f64());
+        self.total_requests.get_or_create(total_labels).inc();
+      }
+    };
   }
 
   pub fn register_metrics(&self, registry: &mut Registry) {
     registry.register(
-      "api_requests_total",
+      "api_requests",
       "Number of total requests",
       self.total_requests.clone(),
     );
