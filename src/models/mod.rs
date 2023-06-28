@@ -71,6 +71,8 @@ impl DBPool {
       builder
         .min_idle(Some(pool_max_size))
         .max_size(pool_max_size)
+        .max_lifetime(None)
+        .idle_timeout(None)
     };
 
     Self {
