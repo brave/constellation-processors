@@ -64,7 +64,7 @@ impl RecoveredMessages {
         conn.clone(),
         epoch as i16,
         msg_tags.to_vec(),
-        profiler.clone(),
+        profiler.as_ref(),
       )
       .await?;
       for rec_msg in recovered_msgs {
@@ -78,7 +78,7 @@ impl RecoveredMessages {
     &mut self,
     conn: Arc<Mutex<DBConnection>>,
     epoch: u8,
-    profiler: Arc<Profiler>,
+    profiler: &Profiler,
   ) -> Result<(), AggregatorError> {
     let recovered_msgs =
       RecoveredMessage::list_with_nonzero_count(conn, epoch as i16, profiler).await?;
@@ -103,7 +103,7 @@ impl RecoveredMessages {
             store_conns.get(),
             rec_msg.id,
             rec_msg.count,
-            profiler.clone(),
+            profiler.as_ref(),
           )
           .await?;
         }
@@ -112,7 +112,7 @@ impl RecoveredMessages {
     for new_msgs in new_msgs.chunks(INSERT_BATCH_SIZE) {
       let new_msgs = new_msgs.to_vec();
       new_msgs
-        .insert_batch(store_conns.get(), profiler.clone())
+        .insert_batch(store_conns.get(), profiler.as_ref())
         .await?;
     }
     Ok(())
@@ -260,7 +260,7 @@ mod tests {
 
     new_rec_msgs
       .clone()
-      .insert_batch(conn.clone(), profiler.clone())
+      .insert_batch(conn.clone(), profiler.as_ref())
       .await
       .unwrap();
 
@@ -268,7 +268,7 @@ mod tests {
 
     for epoch in 3..=4 {
       let mut rec_msg =
-        RecoveredMessage::list(conn.clone(), epoch, vec![vec![60; 20]], profiler.clone())
+        RecoveredMessage::list(conn.clone(), epoch, vec![vec![60; 20]], profiler.as_ref())
           .await
           .unwrap()[0]
           .clone();
@@ -287,7 +287,7 @@ mod tests {
 
     for epoch in 3..=4 {
       let rec_msg =
-        RecoveredMessage::list(conn.clone(), epoch, vec![vec![60; 20]], profiler.clone())
+        RecoveredMessage::list(conn.clone(), epoch, vec![vec![60; 20]], profiler.as_ref())
           .await
           .unwrap()[0]
           .clone();

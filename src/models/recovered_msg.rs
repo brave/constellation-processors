@@ -55,7 +55,7 @@ impl RecoveredMessage {
     conn: Arc<Mutex<DBConnection>>,
     filter_epoch_tag: i16,
     filter_msg_tags: Vec<Vec<u8>>,
-    profiler: Arc<Profiler>,
+    profiler: &Profiler,
   ) -> Result<Vec<RecoveredMessage>, PgStoreError> {
     let start_instant = Instant::now();
     let result = task::spawn_blocking(move || {
@@ -80,7 +80,7 @@ impl RecoveredMessage {
     conn: Arc<Mutex<DBConnection>>,
     curr_id: i64,
     new_count: i64,
-    profiler: Arc<Profiler>,
+    profiler: &Profiler,
   ) -> Result<(), PgStoreError> {
     let start_instant = Instant::now();
     let result = task::spawn_blocking(move || {
@@ -103,7 +103,7 @@ impl RecoveredMessage {
   pub async fn list_with_nonzero_count(
     conn: Arc<Mutex<DBConnection>>,
     filter_epoch_tag: i16,
-    profiler: Arc<Profiler>,
+    profiler: &Profiler,
   ) -> Result<Vec<Self>, PgStoreError> {
     let start_instant = Instant::now();
     let result = task::spawn_blocking(move || {
@@ -143,7 +143,7 @@ impl RecoveredMessage {
   pub async fn delete_epoch(
     conn: Arc<Mutex<DBConnection>>,
     filter_epoch_tag: i16,
-    profiler: Arc<Profiler>,
+    profiler: &Profiler,
   ) -> Result<(), PgStoreError> {
     let start_instant = Instant::now();
     let result = task::spawn_blocking(move || {
@@ -167,7 +167,7 @@ impl BatchInsert<NewRecoveredMessage> for Vec<NewRecoveredMessage> {
   async fn insert_batch(
     self,
     conn: Arc<Mutex<DBConnection>>,
-    profiler: Arc<Profiler>,
+    profiler: &Profiler,
   ) -> Result<(), PgStoreError> {
     let start_instant = Instant::now();
     let result = task::spawn_blocking(move || {

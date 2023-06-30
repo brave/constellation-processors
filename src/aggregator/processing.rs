@@ -1,6 +1,6 @@
 use super::group::GroupedMessages;
 use super::recovered::RecoveredMessages;
-use super::report::report_measurements;
+use super::report::MeasurementReporter;
 use super::AggregatorError;
 use crate::epoch::{is_epoch_expired, EpochConfig};
 use crate::models::{DBConnection, DBPool, DBStorageConnections, PendingMessage, RecoveredMessage};
@@ -16,7 +16,7 @@ pub async fn process_expired_epochs(
   conn: Arc<Mutex<DBConnection>>,
   epoch_config: &EpochConfig,
   out_stream: Option<&DynRecordStream>,
-  profiler: Arc<Profiler>,
+  profiler: &Profiler,
 ) -> Result<(), AggregatorError> {
   let epochs = RecoveredMessage::list_distinct_epochs(conn.clone()).await?;
   for epoch in epochs {
@@ -29,15 +29,9 @@ pub async fn process_expired_epochs(
       .fetch_all_recovered_with_nonzero_count(conn.clone(), epoch as u8, profiler.clone())
       .await?;
 
-    report_measurements(
-      &mut rec_msgs,
-      epoch_config,
-      epoch as u8,
-      true,
-      out_stream,
-      profiler.clone(),
-    )
-    .await?;
+    MeasurementReporter::new(epoch_config, out_stream, profiler, epoch as u8, true)
+      .report(&mut rec_msgs)
+      .await?;
     RecoveredMessage::delete_epoch(conn.clone(), epoch, profiler.clone()).await?;
     PendingMessage::delete_epoch(conn.clone(), epoch, profiler.clone()).await?;
   }
@@ -194,7 +188,7 @@ pub fn start_subtask(
 
     info!("Task {}: Deleting old pending messages", id);
     for (epoch, msg_tag) in pending_tags_to_remove {
-      PendingMessage::delete_tag(store_conns.get(), epoch as i16, msg_tag, profiler.clone())
+      PendingMessage::delete_tag(store_conns.get(), epoch as i16, msg_tag, profiler.as_ref())
         .await
         .unwrap();
     }
@@ -205,14 +199,14 @@ pub fn start_subtask(
     let rec_epochs: Vec<u8> = rec_msgs.map.keys().cloned().collect();
     let mut measurements_count = 0;
     for epoch in rec_epochs {
-      measurements_count += report_measurements(
-        &mut rec_msgs,
+      measurements_count += MeasurementReporter::new(
         epoch_config.as_ref(),
+        out_stream.as_ref().map(|v| v.as_ref()),
+        profiler.as_ref(),
         epoch,
         false,
-        out_stream.as_ref().map(|v| v.as_ref()),
-        profiler.clone(),
       )
+      .report(&mut rec_msgs)
       .await
       .unwrap();
     }
