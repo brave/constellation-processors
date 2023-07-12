@@ -6,6 +6,7 @@ use crate::star::{parse_message, AppSTARError};
 use actix_web::{
   dev::Service,
   error::ResponseError,
+  get,
   http::{header::ContentType, StatusCode},
   post,
   web::{self, Data},
@@ -49,6 +50,12 @@ impl ResponseError for WebError {
       WebError::Internal => StatusCode::INTERNAL_SERVER_ERROR,
     }
   }
+}
+
+#[get("/")]
+/// Return an station identification message for data transparency
+async fn ident_handler() -> Result<impl Responder, WebError> {
+    Ok("STAR Constellation aggregation endpoint. See https://github.com/brave/constellation-processors for more information.")
 }
 
 #[post("/")]
@@ -108,6 +115,7 @@ pub async fn start_server(worker_count: usize) -> std::io::Result<()> {
           result
         })
       })
+      .service(ident_handler)
       .service(main_handler)
   })
   .workers(worker_count)
