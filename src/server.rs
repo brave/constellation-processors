@@ -55,9 +55,10 @@ impl ResponseError for WebError {
 #[get("/")]
 /// Return an station identification message for data transparency
 async fn ident_handler() -> Result<impl Responder, WebError> {
-    Ok(concat!(
-        "STAR Constellation aggregation endpoint.\n",
-        "See https://github.com/brave/constellation-processors for more information.\n"))
+  Ok(concat!(
+    "STAR Constellation aggregation endpoint.\n",
+    "See https://github.com/brave/constellation-processors for more information.\n"
+  ))
 }
 
 #[post("/")]
