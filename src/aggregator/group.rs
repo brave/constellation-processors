@@ -166,7 +166,7 @@ mod tests {
   use super::*;
   use crate::models::{DBPool, NewRecoveredMessage};
   use crate::star::tests::generate_test_message;
-  use dotenv::dotenv;
+  use dotenvy::dotenv;
   use star_constellation::randomness::testing::LocalFetcher;
 
   #[tokio::test]

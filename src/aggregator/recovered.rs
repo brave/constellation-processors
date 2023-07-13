@@ -123,7 +123,7 @@ impl RecoveredMessages {
 mod tests {
   use super::*;
   use crate::models::DBPool;
-  use dotenv::dotenv;
+  use dotenvy::dotenv;
 
   #[tokio::test]
   async fn add_and_save() {
