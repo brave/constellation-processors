@@ -13,7 +13,7 @@ mod star;
 use aggregator::start_aggregation;
 use chrono::Duration;
 use clap::{ArgGroup, Parser};
-use dotenv::dotenv;
+use dotenvy::dotenv;
 use env_logger::Env;
 use epoch::CurrentEpochInfo;
 use epoch::EpochConfig;
