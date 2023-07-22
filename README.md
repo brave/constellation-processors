@@ -95,9 +95,10 @@ The `--output-measurements-to-stdout` switch can be used to output measurements 
 | LAKE_SINK_BATCH_SIZE | 1000 | No | Number of recovered measurements to store per data lake file. |
 | KAFKA_ENCRYPTED_TOPIC | p3a-star-enc | No | Topic for storing protected messages. |
 | KAFKA_OUTPUT_TOPIC | p3a-star-out | No | Topic for storing recovered measurements. |
-| K_THRESHOLD | 100 | No | The selected _k_ threshold for the Constellation application. |
-| MIN_RECV_TIMEOUT_MS | 2500 | No | The minimum amount of time to wait for an encrypted message to be received. |
-| MAX_RECV_TIMEOUT_MS | 30000 | No | The maximum amount of time to wait for an encrypted message to be received. |
+| K_THRESHOLD | 50 | No | The selected _k_ threshold for the Constellation application. |
+| MIN_RECV_RATE_PER_SEC | 100 | No | The minimum consumption rate for encrypted messages. If the consumption rate is below this value, it is assumed that the consumer is near the end of the stream. |
+| MAX_INIT_RECV_TIMEOUT_MS | 30000 | No | The maximum amount of time to wait for an encrypted message to be received, at the beginning of consumption. |
+| MIN_MSGS_TO_PROCESS | 1000 | No | The minimum amount of consumed messages to process/aggregate. If the amount consumed is below this value, the process will exit. |
 
 ## Test client
 

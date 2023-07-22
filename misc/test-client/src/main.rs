@@ -36,7 +36,7 @@ struct CliArgs {
   #[clap(short, long, default_value = "7")]
   layer_count: usize,
 
-  #[clap(long, default_value = "100")]
+  #[clap(long, default_value = "50")]
   threshold: u32,
 
   #[clap(short, long, default_value = "30")]

@@ -13,13 +13,14 @@ use rdkafka::producer::{future_producer::FutureProducer, FutureRecord, Producer}
 use rdkafka::types::RDKafkaErrorCode;
 use rdkafka::TopicPartitionList;
 use std::env;
-use std::str::FromStr;
 use std::sync::Arc;
 use std::time::Duration;
 use tokio::sync::mpsc::{error::SendError, unbounded_channel, UnboundedSender};
 use tokio::sync::{Mutex, RwLock};
 use tokio::task::{JoinError, JoinHandle};
 use tokio::time::sleep;
+
+use crate::util::parse_env_var;
 
 const KAFKA_ENC_TOPIC_ENV_KEY: &str = "KAFKA_ENCRYPTED_TOPIC";
 const KAFKA_OUT_TOPIC_ENV_KEY: &str = "KAFKA_OUTPUT_TOPIC";
@@ -248,12 +249,10 @@ impl RecordStream for KafkaRecordStream {
   }
 
   async fn init_producer_queues(&self) {
-    let task_count = usize::from_str(
-      env::var(KAFKA_PRODUCER_QUEUE_TASK_COUNT_ENV_KEY)
-        .unwrap_or(DEFAULT_KAFKA_PRODUCER_QUEUE_TASK_COUNT.to_string())
-        .as_str(),
-    )
-    .unwrap();
+    let task_count = parse_env_var::<usize>(
+      KAFKA_PRODUCER_QUEUE_TASK_COUNT_ENV_KEY,
+      DEFAULT_KAFKA_PRODUCER_QUEUE_TASK_COUNT,
+    );
     let mut producer_queues = self.producer_queues.write().await;
     for _ in 0..task_count {
       let (tx, mut rx) = unbounded_channel::<Vec<u8>>();

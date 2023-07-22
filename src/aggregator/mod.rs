@@ -11,19 +11,21 @@ use crate::models::{
 use crate::profiler::{Profiler, ProfilerStat};
 use crate::record_stream::{KafkaRecordStream, RecordStream, RecordStreamArc, RecordStreamError};
 use crate::star::AppSTARError;
+use crate::util::parse_env_var;
 use consume::consume_and_group;
 use derive_more::{Display, Error, From};
 use futures::future::try_join_all;
 use processing::{process_expired_epochs, start_subtask};
 use star_constellation::Error as ConstellationError;
-use std::env;
-use std::str::{FromStr, Utf8Error};
+use std::str::Utf8Error;
 use std::sync::{Arc, Mutex};
 use std::time::Instant;
 use tokio::task::JoinError;
 
 pub const K_THRESHOLD_ENV_KEY: &str = "K_THRESHOLD";
-pub const K_THRESHOLD_DEFAULT: &str = "100";
+pub const K_THRESHOLD_DEFAULT: &str = "50";
+pub const MIN_MSGS_TO_PROCESS_ENV_KEY: &str = "MIN_MSGS_TO_PROCESS";
+pub const MIN_MSGS_TO_PROCESS_DEFAULT: &str = "1000";
 
 const CONSUMER_COUNT: usize = 4;
 
@@ -68,9 +70,9 @@ pub async fn start_aggregation(
 ) -> Result<(), AggregatorError> {
   info!("Current epoch is {}", epoch_config.current_epoch.epoch);
 
-  let k_threshold =
-    usize::from_str(&env::var(K_THRESHOLD_ENV_KEY).unwrap_or(K_THRESHOLD_DEFAULT.to_string()))
-      .unwrap_or_else(|_| panic!("{} must be a positive integer", K_THRESHOLD_ENV_KEY));
+  let k_threshold = parse_env_var::<usize>(K_THRESHOLD_ENV_KEY, K_THRESHOLD_DEFAULT);
+  let min_msgs_to_process =
+    parse_env_var::<usize>(MIN_MSGS_TO_PROCESS_ENV_KEY, MIN_MSGS_TO_PROCESS_DEFAULT);
 
   let db_pool = Arc::new(DBPool::new(false));
 
@@ -102,6 +104,12 @@ pub async fn start_aggregation(
       break;
     }
     info!("Consumed {} messages", count);
+
+    if count < min_msgs_to_process {
+      info!("Message count too low, finished aggregation");
+      return Ok(());
+    }
+
     profiler
       .record_total_time(ProfilerStat::DownloadTime, download_start_instant)
       .await;

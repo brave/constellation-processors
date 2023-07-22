@@ -9,6 +9,7 @@ mod record_stream;
 mod schema;
 mod server;
 mod star;
+mod util;
 
 use aggregator::start_aggregation;
 use chrono::Duration;

@@ -2,10 +2,10 @@ use super::group::GroupedMessages;
 use super::AggregatorError;
 use crate::record_stream::RecordStreamArc;
 use crate::star::parse_message;
+use crate::util::parse_env_var;
 use futures::future::try_join_all;
+use futures::FutureExt;
 use star_constellation::api::NestedMessage;
-use std::env;
-use std::str::FromStr;
 use std::sync::Arc;
 use std::time::Duration;
 use tokio::sync::mpsc::{self, UnboundedSender};
@@ -13,10 +13,76 @@ use tokio::sync::Mutex;
 use tokio::task::JoinHandle;
 use tokio::time::sleep;
 
-const MIN_RECV_TIMEOUT_MS_ENV_KEY: &str = "MIN_RECV_TIMEOUT_MS";
-const DEFAULT_MIN_RECV_TIMEOUT_MS: &str = "2500";
-const MAX_RECV_TIMEOUT_MS_ENV_KEY: &str = "MAX_RECV_TIMEOUT_MS";
-const DEFAULT_MAX_RECV_TIMEOUT_MS: &str = "30000";
+const MAX_INIT_RECV_TIMEOUT_MS_ENV_KEY: &str = "MAX_INIT_RECV_TIMEOUT_MS";
+const DEFAULT_MAX_INIT_RECV_TIMEOUT_MS: &str = "30000";
+const MIN_RECV_RATE_ENV_KEY: &str = "MIN_RECV_RATE_PER_SEC";
+const DEFAULT_MIN_RECV_RATE: &str = "100";
+
+const RATE_CHECK_INTERVAL_SECS: u64 = 5;
+
+async fn run_recv_task(
+  rec_stream: RecordStreamArc,
+  parsing_task_tx: mpsc::UnboundedSender<Vec<u8>>,
+  msg_count: Arc<Mutex<usize>>,
+  msgs_to_collect_count: usize,
+) -> Result<(), AggregatorError> {
+  let max_init_recv_timeout = Duration::from_millis(parse_env_var::<u64>(
+    MAX_INIT_RECV_TIMEOUT_MS_ENV_KEY,
+    DEFAULT_MAX_INIT_RECV_TIMEOUT_MS,
+  ));
+  let min_recv_rate = parse_env_var::<u64>(MIN_RECV_RATE_ENV_KEY, DEFAULT_MIN_RECV_RATE);
+  let rate_check_interval = Duration::from_secs(RATE_CHECK_INTERVAL_SECS);
+
+  let mut total_init_wait_time = Duration::from_secs(0);
+  let mut rate_frame_sleep = sleep(rate_check_interval).boxed();
+  let mut stream_started = false;
+  let mut msgs_recvd_in_frame = 0;
+
+  loop {
+    tokio::select! {
+      msg_res = rec_stream.consume() => {
+        parsing_task_tx.send(msg_res?).unwrap();
+
+        let mut msg_count = msg_count.lock().await;
+        *msg_count += 1;
+        if *msg_count >= msgs_to_collect_count {
+          break;
+        }
+        drop(msg_count);
+
+        msgs_recvd_in_frame += 1;
+        if !stream_started {
+          // If the stream has just started (aka the first message was just received),
+          // reset the sleep so that we get a proper, unskewed rate measurement.
+          rate_frame_sleep = sleep(rate_check_interval).boxed();
+          stream_started = true;
+        }
+      },
+      _ = &mut rate_frame_sleep => {
+        rate_frame_sleep = sleep(rate_check_interval).boxed();
+        if !rec_stream.has_assigned_partitions()? {
+          // If there are no assigned partitions, assume we are waiting
+          // for a parititon to be assigned. If no partition is available before
+          // the max_init_recv_timeout, then assume that partitions are not available
+          // and stop the task.
+          total_init_wait_time += rate_check_interval;
+          if total_init_wait_time >= max_init_recv_timeout {
+            break;
+          }
+        } else {
+          // If partitions are assigned, and the msgs/second rate is less than the
+          // defined minimum, stop receiving. We are probably near the end of the stream.
+          if (msgs_recvd_in_frame / RATE_CHECK_INTERVAL_SECS) < min_recv_rate {
+            break;
+          }
+          msgs_recvd_in_frame = 0;
+        }
+      },
+    }
+  }
+  info!("Kafka consume task finished");
+  Ok(())
+}
 
 fn create_recv_tasks(
   rec_streams: &Vec<RecordStreamArc>,
@@ -27,51 +93,20 @@ fn create_recv_tasks(
   msg_count: Arc<Mutex<usize>>,
   msgs_to_collect_count: usize,
 ) -> Vec<JoinHandle<Result<(), AggregatorError>>> {
-  let min_recv_timeout = Duration::from_millis(
-    u64::from_str(
-      &env::var(MIN_RECV_TIMEOUT_MS_ENV_KEY).unwrap_or(DEFAULT_MIN_RECV_TIMEOUT_MS.to_string()),
-    )
-    .unwrap(),
-  );
-  let max_recv_timeout = Duration::from_millis(
-    u64::from_str(
-      &env::var(MAX_RECV_TIMEOUT_MS_ENV_KEY).unwrap_or(DEFAULT_MAX_RECV_TIMEOUT_MS.to_string()),
-    )
-    .unwrap(),
-  );
   parsing_tasks
     .iter()
     .zip(rec_streams.iter().cloned().into_iter())
-    .map(|((raw_tx, _), rec_stream)| {
-      let raw_tx = raw_tx.clone();
+    .map(|((parsing_task_tx, _), rec_stream)| {
+      let parsing_task_tx = parsing_task_tx.clone();
       let msg_count = msg_count.clone();
       tokio::spawn(async move {
-        let mut total_wait_time = Duration::from_secs(0);
-        loop {
-          tokio::select! {
-            msg_res = rec_stream.consume() => {
-              raw_tx.send(msg_res?).unwrap();
-
-              let mut msg_count = msg_count.lock().await;
-              *msg_count += 1;
-              if *msg_count >= msgs_to_collect_count {
-                break;
-              }
-              drop(msg_count);
-            },
-            _ = sleep(min_recv_timeout) => {
-              total_wait_time += min_recv_timeout;
-              // if there are assigned partitions, wait only until the min_recv_timeout for a message.
-              // if there are not assigned partitions, wait until the max_recv_timeout to give
-              // the broker a chance to assign partitions.
-              if rec_stream.has_assigned_partitions()? || total_wait_time >= max_recv_timeout {
-                break;
-              }
-            },
-          }
-        }
-        info!("Kafka consume task finished");
-        Ok(())
+        run_recv_task(
+          rec_stream,
+          parsing_task_tx,
+          msg_count,
+          msgs_to_collect_count,
+        )
+        .await
       })
     })
     .collect()
