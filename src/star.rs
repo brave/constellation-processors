@@ -1,4 +1,6 @@
 use derive_more::{Display, Error, From};
+use rand::seq::IteratorRandom;
+use rand::thread_rng;
 use star_constellation::api::{
   key_recover, recover, NestedMessage, PartialMeasurement, SerializableNestedMessage,
 };
@@ -21,6 +23,7 @@ pub enum AppSTARError {
 pub struct MsgRecoveryInfo {
   pub measurement: (String, String),
   pub next_layer_messages: Option<Vec<NestedMessage>>,
+  pub error_count: usize,
 }
 
 pub fn parse_message(bincode_msg: &[u8]) -> Result<NestedMessage, AppSTARError> {
@@ -52,10 +55,10 @@ pub fn recover_key(
   k_threshold: usize,
 ) -> Result<Vec<u8>, AppSTARError> {
   let msgs_to_use = min(k_threshold + (k_threshold / 3), messages.len());
-  let unencrypted_layers: Vec<_> = messages[..msgs_to_use]
+  let unencrypted_layers: Vec<_> = messages
     .iter()
     .map(|v| &v.unencrypted_layer)
-    .collect();
+    .choose_multiple(&mut thread_rng(), msgs_to_use);
 
   Ok(key_recover(&unencrypted_layers, epoch_tag)?)
 }
@@ -65,6 +68,7 @@ pub fn recover_msgs(
   key: &[u8],
 ) -> Result<MsgRecoveryInfo, AppSTARError> {
   let unencrypted_layers: Vec<_> = messages.iter().map(|v| &v.unencrypted_layer).collect();
+  let mut error_count = 0;
 
   let pms = recover(&unencrypted_layers, key)?;
   let has_next_layer = pms.iter().any(|v| v.get_next_layer_key().is_some());
@@ -74,12 +78,18 @@ pub fn recover_msgs(
         .into_iter()
         .zip(pms.iter())
         .filter(|(_, pm)| pm.get_next_layer_key().as_ref().is_some())
-        .map(|(mut msg, pm)| {
+        .filter_map(|(mut msg, pm)| {
           let layer_key = pm.get_next_layer_key().as_ref().unwrap();
-          msg.decrypt_next_layer(layer_key);
-          msg
+          match msg.decrypt_next_layer(layer_key) {
+            Err(e) => {
+              debug!("failed to decrypt next layer for message due to bincode error, will omit; error = {e}");
+              error_count += 1;
+              None
+            }
+            Ok(_) => Some(msg),
+          }
         })
-        .collect(),
+        .collect::<Vec<_>>(),
     )
   } else {
     None
@@ -88,6 +98,7 @@ pub fn recover_msgs(
   Ok(MsgRecoveryInfo {
     measurement: get_measurement_contents(&pms[0])?,
     next_layer_messages,
+    error_count,
   })
 }
 

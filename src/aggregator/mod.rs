@@ -142,7 +142,8 @@ pub async fn start_aggregation(
 
     let measurement_counts = try_join_all(tasks).await?;
 
-    let total_measurement_count = measurement_counts.iter().sum::<i64>();
+    let total_measurement_count = measurement_counts.iter().map(|(c, _)| c).sum::<i64>();
+    let total_error_count = measurement_counts.iter().map(|(_, e)| e).sum::<usize>();
 
     if let Some(out_stream) = out_stream.as_ref() {
       wait_and_commit_producer(out_stream).await?;
@@ -162,6 +163,12 @@ pub async fn start_aggregation(
       .await;
 
     info!("Reported {} final measurements", total_measurement_count);
+    if total_error_count > 0 {
+      error!(
+        "Failed to recover {} measurements due to bincode deserialization errors",
+        total_error_count
+      );
+    }
 
     info!("Profiler summary:\n{}", profiler.summary().await);
   }

@@ -4,7 +4,7 @@ version = "1.0.0"
 edition = "2021"
 
 [dependencies]
-star-constellation = { git = "https://github.com/brave/constellation", rev = "b6b8396abd98cc87a187e051c32a291c9faa43f7" }
+star-constellation = { git = "https://github.com/brave/constellation", rev = "91e69504c0419b01e4fdd47b453fb172a8f5ed2d" }
 sta-rs = { git = "https://github.com/brave/sta-rs", rev = "b08701396b4beaeec1b12382adf6bf8303ba9cd5" }
 actix-web = "4"
 env_logger = "0.10"

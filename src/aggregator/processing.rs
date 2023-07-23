@@ -48,9 +48,10 @@ fn process_one_layer(
   grouped_msgs: &mut GroupedMessages,
   rec_msgs: &mut RecoveredMessages,
   k_threshold: usize,
-) -> Result<(GroupedMessages, Vec<(u8, Vec<u8>)>, bool), AggregatorError> {
+) -> Result<(GroupedMessages, Vec<(u8, Vec<u8>)>, usize, bool), AggregatorError> {
   let mut next_grouped_msgs = GroupedMessages::default();
   let mut pending_tags_to_remove = Vec::new();
+  let mut total_error_count = 0;
   let mut has_processed = false;
 
   for (epoch, epoch_map) in &mut grouped_msgs.msg_chunks {
@@ -81,13 +82,13 @@ fn process_one_layer(
           Err(e) => {
             match e {
               AppSTARError::Recovery(ConstellationError::ShareRecovery) => {
-                // Store new messages until we receive more shares in the future
+                // Store new messages until we receive more shares in the future.
                 for msg in msgs.drain(..new_msg_count) {
                   chunk.new_msgs.push(msg);
                 }
                 continue;
               }
-              _ => return Err(AggregatorError::AppSTAR(e)),
+              _ => return Err(e.into()),
             };
           }
           Ok(key) => key,
@@ -99,7 +100,9 @@ fn process_one_layer(
       let MsgRecoveryInfo {
         measurement,
         next_layer_messages,
+        error_count,
       } = recover_msgs(msgs, &key)?;
+      total_error_count += error_count;
 
       // create or update recovered msg with new count
       if let Some(rec_msg) = existing_rec_msg {
@@ -132,7 +135,12 @@ fn process_one_layer(
     }
   }
 
-  Ok((next_grouped_msgs, pending_tags_to_remove, has_processed))
+  Ok((
+    next_grouped_msgs,
+    pending_tags_to_remove,
+    total_error_count,
+    has_processed,
+  ))
 }
 
 pub fn start_subtask(
@@ -144,13 +152,14 @@ pub fn start_subtask(
   k_threshold: usize,
   epoch_config: Arc<EpochConfig>,
   profiler: Arc<Profiler>,
-) -> JoinHandle<i64> {
+) -> JoinHandle<(i64, usize)> {
   tokio::spawn(async move {
     let mut pending_tags_to_remove = Vec::new();
 
     let mut rec_msgs = RecoveredMessages::default();
 
     let processing_start_instant = Instant::now();
+    let mut error_count = 0;
 
     let mut it_count = 1;
     loop {
@@ -173,8 +182,9 @@ pub fn start_subtask(
         .unwrap();
 
       debug!("Task {}: Starting actual processing", id);
-      let (new_grouped_msgs, pending_tags_to_remove_chunk, has_processed) =
+      let (new_grouped_msgs, pending_tags_to_remove_chunk, layer_error_count, has_processed) =
         process_one_layer(&mut grouped_msgs, &mut rec_msgs, k_threshold).unwrap();
+      error_count += layer_error_count;
 
       pending_tags_to_remove.extend(pending_tags_to_remove_chunk);
 
@@ -224,6 +234,6 @@ pub fn start_subtask(
       .record_range_time(ProfilerStat::TaskProcessingTime, processing_start_instant)
       .await;
 
-    measurements_count
+    (measurements_count, error_count)
   })
 }

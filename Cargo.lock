@@ -2489,7 +2489,7 @@ dependencies = [
 [[package]]
 name = "star-constellation"
 version = "0.2.0"
-source = "git+https://github.com/brave/constellation?rev=b6b8396abd98cc87a187e051c32a291c9faa43f7#b6b8396abd98cc87a187e051c32a291c9faa43f7"
+source = "git+https://github.com/brave/constellation?rev=91e69504c0419b01e4fdd47b453fb172a8f5ed2d#91e69504c0419b01e4fdd47b453fb172a8f5ed2d"
 dependencies = [
  "bincode",
  "lazy_static",
