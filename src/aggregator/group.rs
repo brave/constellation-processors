@@ -10,7 +10,7 @@ use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 use tokio::task::JoinHandle;
 
-const DB_WORKERS: usize = 1;
+const DB_WORKERS: usize = 4;
 const INSERT_BATCH_SIZE: usize = 10000;
 
 #[derive(Default, Clone)]
