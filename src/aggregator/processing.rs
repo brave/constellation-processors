@@ -181,7 +181,15 @@ pub fn start_subtask(
         .await
         .unwrap();
 
-      debug!("Task {}: Starting actual processing", id);
+      let tag_count = grouped_msgs
+        .msg_chunks
+        .values()
+        .map(|c| c.len())
+        .sum::<usize>();
+      debug!(
+        "Task {}: Starting actual processing (tag count = {})",
+        id, tag_count
+      );
       let (new_grouped_msgs, pending_tags_to_remove_chunk, layer_error_count, has_processed) =
         process_one_layer(&mut grouped_msgs, &mut rec_msgs, k_threshold).unwrap();
       error_count += layer_error_count;
