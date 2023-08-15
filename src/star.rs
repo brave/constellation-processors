@@ -71,22 +71,35 @@ pub fn recover_msgs(
   let mut error_count = 0;
 
   let pms = recover(&unencrypted_layers, key)?;
-  let has_next_layer = pms.iter().any(|v| v.get_next_layer_key().is_some());
+
+  let has_next_layer = pms.iter().any(|v| {
+    v.as_ref()
+      .ok()
+      .and_then(|v| v.get_next_layer_key().as_ref())
+      .is_some()
+  });
   let next_layer_messages = if has_next_layer {
     Some(
       messages
         .into_iter()
         .zip(pms.iter())
-        .filter(|(_, pm)| pm.get_next_layer_key().as_ref().is_some())
         .filter_map(|(mut msg, pm)| {
-          let layer_key = pm.get_next_layer_key().as_ref().unwrap();
-          match msg.decrypt_next_layer(layer_key) {
+          match pm.as_ref() {
+            Ok(pm) => pm.get_next_layer_key().as_ref().and_then(|layer_key| {
+                match msg.decrypt_next_layer(layer_key) {
+                  Err(e) => {
+                    debug!("failed to decrypt next layer for message due to bincode error, will omit; error = {e}");
+                    error_count += 1;
+                    None
+                  }
+                  Ok(_) => Some(msg),
+              }
+            }),
             Err(e) => {
-              debug!("failed to decrypt next layer for message due to bincode error, will omit; error = {e}");
+              debug!("failed to decrypt current layer for message due to bincode error, will omit; error = {e}");
               error_count += 1;
               None
             }
-            Ok(_) => Some(msg),
           }
         })
         .collect::<Vec<_>>(),
@@ -96,7 +109,9 @@ pub fn recover_msgs(
   };
 
   Ok(MsgRecoveryInfo {
-    measurement: get_measurement_contents(&pms[0])?,
+    measurement: get_measurement_contents(
+      pms.iter().find(|v| v.is_ok()).unwrap().as_ref().unwrap(),
+    )?,
     next_layer_messages,
     error_count,
   })

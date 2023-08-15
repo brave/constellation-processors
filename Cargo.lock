@@ -210,13 +210,14 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "f26201604c87b1e01bd3d98f8d5d9a8fcbb815e8cedb41ffccbeb4bf593a35fe"
 
 [[package]]
-name = "adss-rs"
-version = "0.2.0"
-source = "git+https://github.com/brave/sta-rs?rev=a0381f242314a906425e39f73656717e024636f3#a0381f242314a906425e39f73656717e024636f3"
+name = "adss"
+version = "0.2.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "d8bc6cac27ff612282b333cef11a28a3164bd2a82fdf37e093ca8f5313d8db70"
 dependencies = [
  "rand",
- "sharks 0.5.0 (git+https://github.com/brave/sta-rs?rev=a0381f242314a906425e39f73656717e024636f3)",
- "strobe-rng 0.2.0 (git+https://github.com/brave/sta-rs?rev=a0381f242314a906425e39f73656717e024636f3)",
+ "rand_core 0.6.4",
+ "star-sharks",
  "strobe-rs",
  "zeroize",
 ]
@@ -227,8 +228,8 @@ version = "0.2.0"
 source = "git+https://github.com/brave/sta-rs?rev=b08701396b4beaeec1b12382adf6bf8303ba9cd5#b08701396b4beaeec1b12382adf6bf8303ba9cd5"
 dependencies = [
  "rand",
- "sharks 0.5.0 (git+https://github.com/brave/sta-rs?rev=b08701396b4beaeec1b12382adf6bf8303ba9cd5)",
- "strobe-rng 0.2.0 (git+https://github.com/brave/sta-rs?rev=b08701396b4beaeec1b12382adf6bf8303ba9cd5)",
+ "sharks",
+ "strobe-rng",
  "strobe-rs",
  "zeroize",
 ]
@@ -597,7 +598,7 @@ dependencies = [
  "sentry",
  "serde",
  "serde_json",
- "sta-rs 0.2.0 (git+https://github.com/brave/sta-rs?rev=b08701396b4beaeec1b12382adf6bf8303ba9cd5)",
+ "sta-rs 0.2.0",
  "star-constellation",
  "tokio",
  "tokio-util",
@@ -686,6 +687,35 @@ dependencies = [
  "serde",
  "subtle",
  "zeroize",
+]
+
+[[package]]
+name = "curve25519-dalek"
+version = "4.0.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "f711ade317dd348950a9910f81c5947e3d8907ebd2b83f76203ff1807e6a2bc2"
+dependencies = [
+ "cfg-if",
+ "cpufeatures",
+ "curve25519-dalek-derive",
+ "fiat-crypto",
+ "platforms",
+ "rand_core 0.6.4",
+ "rustc_version",
+ "serde",
+ "subtle",
+ "zeroize",
+]
+
+[[package]]
+name = "curve25519-dalek-derive"
+version = "0.1.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "83fdaf97f4804dcebfa5862639bc9ce4121e82140bec2a987ac5140294865b5b"
+dependencies = [
+ "proc-macro2",
+ "quote",
+ "syn 2.0.25",
 ]
 
 [[package]]
@@ -895,6 +925,12 @@ dependencies = [
  "quote",
  "syn 1.0.109",
 ]
+
+[[package]]
+name = "fiat-crypto"
+version = "0.1.20"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "e825f6987101665dea6ec934c09ec6d721de7bc1bf92248e1d5810c8cd636b77"
 
 [[package]]
 name = "findshlibs"
@@ -1727,23 +1763,10 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "26072860ba924cbfa98ea39c8c19b4dd6a4a25423dbdf219c1eca91aa0cf6964"
 
 [[package]]
-name = "ppoprf"
-version = "0.2.0"
-source = "git+https://github.com/brave/sta-rs?rev=a0381f242314a906425e39f73656717e024636f3#a0381f242314a906425e39f73656717e024636f3"
-dependencies = [
- "base64 0.13.1",
- "bincode",
- "bitvec",
- "curve25519-dalek",
- "derive_more",
- "rand",
- "rand_core 0.5.1",
- "rand_core 0.6.4",
- "serde",
- "strobe-rng 0.2.0 (git+https://github.com/brave/sta-rs?rev=a0381f242314a906425e39f73656717e024636f3)",
- "strobe-rs",
- "zeroize",
-]
+name = "platforms"
+version = "3.0.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "e3d7ddaed09e0eb771a79ab0fd64609ba0afb0a8366421957936ad14cbd13630"
 
 [[package]]
 name = "ppoprf"
@@ -1753,13 +1776,31 @@ dependencies = [
  "base64 0.13.1",
  "bincode",
  "bitvec",
- "curve25519-dalek",
+ "curve25519-dalek 3.2.0",
  "derive_more",
  "rand",
  "rand_core 0.5.1",
  "rand_core 0.6.4",
  "serde",
- "strobe-rng 0.2.0 (git+https://github.com/brave/sta-rs?rev=b08701396b4beaeec1b12382adf6bf8303ba9cd5)",
+ "strobe-rng",
+ "strobe-rs",
+ "zeroize",
+]
+
+[[package]]
+name = "ppoprf"
+version = "0.3.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "d97a7a93423a5988e153e29de494b2625528196476213a4401e91140487faf1a"
+dependencies = [
+ "base64 0.13.1",
+ "bincode",
+ "bitvec",
+ "curve25519-dalek 4.0.0",
+ "derive_more",
+ "rand",
+ "rand_core 0.6.4",
+ "serde",
  "strobe-rs",
  "zeroize",
 ]
@@ -2397,19 +2438,6 @@ dependencies = [
 [[package]]
 name = "sharks"
 version = "0.5.0"
-source = "git+https://github.com/brave/sta-rs?rev=a0381f242314a906425e39f73656717e024636f3#a0381f242314a906425e39f73656717e024636f3"
-dependencies = [
- "bitvec",
- "byteorder",
- "ff",
- "rand",
- "rand_core 0.6.4",
- "zeroize",
-]
-
-[[package]]
-name = "sharks"
-version = "0.5.0"
 source = "git+https://github.com/brave/sta-rs?rev=b08701396b4beaeec1b12382adf6bf8303ba9cd5#b08701396b4beaeec1b12382adf6bf8303ba9cd5"
 dependencies = [
  "bitvec",
@@ -2473,51 +2501,55 @@ dependencies = [
 [[package]]
 name = "sta-rs"
 version = "0.2.0"
-source = "git+https://github.com/brave/sta-rs?rev=a0381f242314a906425e39f73656717e024636f3#a0381f242314a906425e39f73656717e024636f3"
+source = "git+https://github.com/brave/sta-rs?rev=b08701396b4beaeec1b12382adf6bf8303ba9cd5#b08701396b4beaeec1b12382adf6bf8303ba9cd5"
 dependencies = [
- "adss-rs 0.2.0 (git+https://github.com/brave/sta-rs?rev=a0381f242314a906425e39f73656717e024636f3)",
- "ppoprf 0.2.0 (git+https://github.com/brave/sta-rs?rev=a0381f242314a906425e39f73656717e024636f3)",
+ "adss-rs",
+ "ppoprf 0.2.0",
  "rand_core 0.6.4",
- "strobe-rng 0.2.0 (git+https://github.com/brave/sta-rs?rev=a0381f242314a906425e39f73656717e024636f3)",
+ "strobe-rng",
  "strobe-rs",
  "zeroize",
 ]
 
 [[package]]
 name = "sta-rs"
-version = "0.2.0"
-source = "git+https://github.com/brave/sta-rs?rev=b08701396b4beaeec1b12382adf6bf8303ba9cd5#b08701396b4beaeec1b12382adf6bf8303ba9cd5"
+version = "0.2.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "eafa25c94ddb02f8e90d57f66d39f1e3bb4f0857344b5e53b2254ea25764484b"
 dependencies = [
- "adss-rs 0.2.0 (git+https://github.com/brave/sta-rs?rev=b08701396b4beaeec1b12382adf6bf8303ba9cd5)",
- "ppoprf 0.2.0 (git+https://github.com/brave/sta-rs?rev=b08701396b4beaeec1b12382adf6bf8303ba9cd5)",
+ "adss",
+ "ppoprf 0.3.1",
+ "rand",
  "rand_core 0.6.4",
- "strobe-rng 0.2.0 (git+https://github.com/brave/sta-rs?rev=b08701396b4beaeec1b12382adf6bf8303ba9cd5)",
  "strobe-rs",
  "zeroize",
 ]
 
 [[package]]
 name = "star-constellation"
-version = "0.2.0"
-source = "git+https://github.com/brave/constellation?rev=91e69504c0419b01e4fdd47b453fb172a8f5ed2d#91e69504c0419b01e4fdd47b453fb172a8f5ed2d"
+version = "0.2.1"
+source = "git+https://github.com/brave/constellation?rev=c6f2b8493b308f3c3de5da3d7178a290ebdc53ed#c6f2b8493b308f3c3de5da3d7178a290ebdc53ed"
 dependencies = [
  "bincode",
  "lazy_static",
- "ppoprf 0.2.0 (git+https://github.com/brave/sta-rs?rev=a0381f242314a906425e39f73656717e024636f3)",
+ "ppoprf 0.3.1",
  "rand",
- "rand_core 0.6.4",
  "serde",
  "serde_json",
- "sta-rs 0.2.0 (git+https://github.com/brave/sta-rs?rev=a0381f242314a906425e39f73656717e024636f3)",
+ "sta-rs 0.2.2",
 ]
 
 [[package]]
-name = "strobe-rng"
-version = "0.2.0"
-source = "git+https://github.com/brave/sta-rs?rev=a0381f242314a906425e39f73656717e024636f3#a0381f242314a906425e39f73656717e024636f3"
+name = "star-sharks"
+version = "0.6.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "10d93e5e8ce0014cd051319b0a4c9fb66130e2c27ee8ed7890685f1874fd786d"
 dependencies = [
- "rand_core 0.6.4",
- "strobe-rs",
+ "bitvec",
+ "byteorder",
+ "ff",
+ "rand",
+ "zeroize",
 ]
 
 [[package]]
