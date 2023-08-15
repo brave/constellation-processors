@@ -1,15 +1,20 @@
 #!/bin/sh
 set -e
 
+get_auth_token()
+{
+  export $(printf "AWS_ACCESS_KEY_ID=%s AWS_SECRET_ACCESS_KEY=%s AWS_SESSION_TOKEN=%s" \
+  $(aws sts assume-role \
+  --role-arn $DATABASE_ROLE \
+  --role-session-name DbAuthBootstrap \
+  --query "Credentials.[AccessKeyId,SecretAccessKey,SessionToken]" \
+  --output text))
+}
+
+get_auth_token
+
 alias urlencode='python3 -c "import sys, urllib.parse as ul; \
 print (ul.quote_plus(sys.stdin.readlines()[0].strip()))"'
-
-export $(printf "AWS_ACCESS_KEY_ID=%s AWS_SECRET_ACCESS_KEY=%s AWS_SESSION_TOKEN=%s" \
-$(aws sts assume-role \
---role-arn $DATABASE_ROLE \
---role-session-name DbAuthBootstrap \
---query "Credentials.[AccessKeyId,SecretAccessKey,SessionToken]" \
---output text))
 
 DATABASE_PASSWORD="$(aws rds generate-db-auth-token \
 --hostname $DATABASE_HOST \
@@ -20,6 +25,8 @@ DATABASE_PASSWORD="$(aws rds generate-db-auth-token \
 export DATABASE_URL="postgres://$DATABASE_USER:$DATABASE_PASSWORD@$DATABASE_HOST/$DATABASE_INSTANCE"
 
 constellation-processors $@
+
+get_auth_token
 
 # stop the db if possible
 if [ -n "$DATABASE_STATE_MACHINE_ARN" ]; then
