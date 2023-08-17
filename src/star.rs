@@ -70,7 +70,7 @@ pub fn recover_msgs(
   let unencrypted_layers: Vec<_> = messages.iter().map(|v| &v.unencrypted_layer).collect();
   let mut error_count = 0;
 
-  let pms = recover(&unencrypted_layers, key)?;
+  let pms = recover(&unencrypted_layers, key);
 
   let has_next_layer = pms.iter().any(|v| {
     v.as_ref()

@@ -5,7 +5,7 @@ use crate::profiler::Profiler;
 use crate::star::serialize_message_bincode;
 use futures::future::try_join_all;
 use star_constellation::api::NestedMessage;
-use std::cmp::{max, min};
+use std::cmp::max;
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 use tokio::task::JoinHandle;
@@ -148,8 +148,9 @@ impl GroupedMessages {
         .chunks(max(1, msg_tags.len() / chunk_count))
         .map(|v| v.to_vec())
         .collect();
+
       for (mut i, tag_chunk) in msg_tag_chunks.into_iter().enumerate() {
-        i = min(i, chunk_count - 1);
+        i = i % chunk_count;
         let new_epoch_chunk = result[i].msg_chunks.entry(*epoch).or_default();
         for tag in tag_chunk {
           let msg_chunk = old_epoch_chunk.remove(&tag).unwrap();
