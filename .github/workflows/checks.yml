@@ -33,7 +33,7 @@ jobs:
         with:
           profile: minimal
           components: clippy, rustfmt
-          toolchain: 1.68
+          toolchain: 1.71
           override: true
 
       - name: Cache
