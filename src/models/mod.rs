@@ -21,10 +21,13 @@ use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 use tokio::time::sleep;
 
+use crate::channel::get_data_channel_value_from_env;
 use crate::profiler::Profiler;
 
 const DATABASE_URL_ENV_KEY: &str = "DATABASE_URL";
 const TEST_DATABASE_URL_ENV_KEY: &str = "TEST_DATABASE_URL";
+const DATABASE_NAMES_ENV_KEY: &str = "DATABASE_NAMES";
+const DEFAULT_DATABASE_NAMES: &str = "typical=postgres";
 const MAX_CONN_ENV_KEY: &str = "DATABASE_MAX_CONN";
 const MAX_CONN_DEFAULT: &str = "100";
 const MAX_WRITE_CONN_ENV_KEY: &str = "DATABASE_MAX_WRITE_CONN";
@@ -36,19 +39,40 @@ const MIGRATIONS: EmbeddedMigrations = embed_migrations!("migrations");
 
 pub type DBConnection = PooledConnection<ConnectionManager<PgConnection>>;
 
+pub enum DBConnectionType<'a> {
+  #[allow(dead_code)]
+  Test,
+  Normal {
+    channel_name: &'a str,
+  },
+}
+
 pub struct DBPool {
   inner_pool: Pool<ConnectionManager<PgConnection>>,
 }
 
+fn get_channel_db_url<'a>(conn_type: &DBConnectionType<'a>) -> String {
+  let env_key = match conn_type {
+    DBConnectionType::Test => TEST_DATABASE_URL_ENV_KEY,
+    DBConnectionType::Normal { .. } => DATABASE_URL_ENV_KEY,
+  };
+  let db_url = env::var(env_key).unwrap_or_else(|_| panic!("{} env var must be defined", env_key));
+  match conn_type {
+    DBConnectionType::Test => db_url,
+    DBConnectionType::Normal { channel_name } => {
+      let database_name = get_data_channel_value_from_env(
+        DATABASE_NAMES_ENV_KEY,
+        DEFAULT_DATABASE_NAMES,
+        channel_name,
+      );
+      format!("{}/{}", db_url, database_name)
+    }
+  }
+}
+
 impl DBPool {
-  pub fn new(use_test_db: bool) -> Self {
-    let env_key = if use_test_db {
-      TEST_DATABASE_URL_ENV_KEY
-    } else {
-      DATABASE_URL_ENV_KEY
-    };
-    let db_url =
-      env::var(env_key).unwrap_or_else(|_| panic!("{} env var must be defined", env_key));
+  pub fn new<'a>(conn_type: DBConnectionType<'a>) -> Self {
+    let db_url = get_channel_db_url(&conn_type);
     let pool_max_size =
       u32::from_str(&env::var(MAX_CONN_ENV_KEY).unwrap_or(MAX_CONN_DEFAULT.to_string()))
         .unwrap_or_else(|_| panic!("{} must be a positive integer", MAX_CONN_ENV_KEY));
@@ -62,7 +86,7 @@ impl DBPool {
       .expect("failed to run migrations");
 
     let mut builder = Pool::builder();
-    builder = if use_test_db {
+    builder = if let DBConnectionType::Test = conn_type {
       builder
         .connection_customizer(Box::new(TestConnectionCustomizer))
         .min_idle(Some(1))

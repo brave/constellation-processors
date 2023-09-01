@@ -12,6 +12,7 @@ use rdkafka::message::Message;
 use rdkafka::producer::{future_producer::FutureProducer, FutureRecord, Producer};
 use rdkafka::types::RDKafkaErrorCode;
 use rdkafka::TopicPartitionList;
+use std::collections::HashMap;
 use std::env;
 use std::sync::Arc;
 use std::time::Duration;
@@ -20,12 +21,13 @@ use tokio::sync::{Mutex, RwLock};
 use tokio::task::{JoinError, JoinHandle};
 use tokio::time::sleep;
 
+use crate::channel::{get_data_channel_map_from_env, get_data_channel_value_from_env};
 use crate::util::parse_env_var;
 
-const KAFKA_ENC_TOPIC_ENV_KEY: &str = "KAFKA_ENCRYPTED_TOPIC";
-const KAFKA_OUT_TOPIC_ENV_KEY: &str = "KAFKA_OUTPUT_TOPIC";
-const DEFAULT_ENC_KAFKA_TOPIC: &str = "p3a-star-enc";
-const DEFAULT_OUT_KAFKA_TOPIC: &str = "p3a-star-out";
+const KAFKA_ENC_TOPICS_ENV_KEY: &str = "KAFKA_ENCRYPTED_TOPICS";
+const KAFKA_OUT_TOPICS_ENV_KEY: &str = "KAFKA_OUTPUT_TOPICS";
+const DEFAULT_ENC_KAFKA_TOPICS: &str = "typical=p3a-star-enc";
+const DEFAULT_OUT_KAFKA_TOPICS: &str = "typical=p3a-star-out";
 const KAFKA_BROKERS_ENV_KEY: &str = "KAFKA_BROKERS";
 const KAFKA_ENABLE_PLAINTEXT_ENV_KEY: &str = "KAFKA_ENABLE_PLAINTEXT";
 const KAFKA_PRODUCER_QUEUE_TASK_COUNT_ENV_KEY: &str = "KAFKA_PRODUCE_QUEUE_TASK_COUNT";
@@ -106,18 +108,38 @@ pub struct KafkaRecordStream {
   >,
 }
 
+pub fn get_data_channel_topic_map_from_env(use_output_topics: bool) -> HashMap<String, String> {
+  match use_output_topics {
+    true => get_data_channel_map_from_env(KAFKA_OUT_TOPICS_ENV_KEY, DEFAULT_OUT_KAFKA_TOPICS),
+    false => get_data_channel_map_from_env(KAFKA_ENC_TOPICS_ENV_KEY, DEFAULT_ENC_KAFKA_TOPICS),
+  }
+}
+
+pub fn get_data_channel_topic_from_env(use_output_topic: bool, channel_name: &str) -> String {
+  match use_output_topic {
+    true => get_data_channel_value_from_env(
+      KAFKA_OUT_TOPICS_ENV_KEY,
+      DEFAULT_OUT_KAFKA_TOPICS,
+      channel_name,
+    ),
+    false => get_data_channel_value_from_env(
+      KAFKA_ENC_TOPICS_ENV_KEY,
+      DEFAULT_ENC_KAFKA_TOPICS,
+      channel_name,
+    ),
+  }
+}
+
 impl KafkaRecordStream {
-  pub fn new(enable_producer: bool, enable_consumer: bool, use_output_topic: bool) -> Self {
-    let (topic, group_id) = if use_output_topic {
-      (
-        env::var(KAFKA_OUT_TOPIC_ENV_KEY).unwrap_or(DEFAULT_OUT_KAFKA_TOPIC.to_string()),
-        "star-agg-dec",
-      )
-    } else {
-      (
-        env::var(KAFKA_ENC_TOPIC_ENV_KEY).unwrap_or(DEFAULT_ENC_KAFKA_TOPIC.to_string()),
-        "star-agg-enc",
-      )
+  pub fn new(
+    enable_producer: bool,
+    enable_consumer: bool,
+    topic: String,
+    use_output_group_id: bool,
+  ) -> Self {
+    let group_id = match use_output_group_id {
+      true => "star-agg-dec",
+      false => "star-agg-enc",
     };
 
     let mut result = Self {
@@ -130,7 +152,7 @@ impl KafkaRecordStream {
       let context = KafkaContext;
       let mut config = Self::new_client_config();
       let mut config_ref = &mut config;
-      if use_output_topic {
+      if use_output_group_id {
         config_ref = config_ref.set("transactional.id", "main");
       }
       result.producer = Some(Arc::new(

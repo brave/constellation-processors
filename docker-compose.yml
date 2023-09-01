@@ -30,7 +30,7 @@ services:
     networks:
       - star-agg
     volumes:
-      - "./misc/create_integration_test_db.sql:/docker-entrypoint-initdb.d/create_integration_test_db.sql"
+      - "./misc/create_additional_dbs.sql:/docker-entrypoint-initdb.d/create_additional_dbs.sql"
 
   zookeeper:
     image: bitnami/zookeeper

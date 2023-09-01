@@ -165,7 +165,7 @@ impl GroupedMessages {
 #[cfg(test)]
 mod tests {
   use super::*;
-  use crate::models::{DBPool, NewRecoveredMessage};
+  use crate::models::{DBConnectionType, DBPool, NewRecoveredMessage};
   use crate::star::tests::generate_test_message;
   use dotenvy::dotenv;
   use star_constellation::randomness::testing::LocalFetcher;
@@ -198,7 +198,7 @@ mod tests {
 
     let expected_epoch_counts = vec![(0, vec![1, 2]), (1, vec![1, 1]), (2, vec![1]), (3, vec![1])];
 
-    let db_pool = Arc::new(DBPool::new(true));
+    let db_pool = Arc::new(DBPool::new(DBConnectionType::Test));
 
     let expected_epochs = vec![0, 1, 2, 3];
 
@@ -335,7 +335,7 @@ mod tests {
       })
       .collect();
 
-    let db_pool = Arc::new(DBPool::new(true));
+    let db_pool = Arc::new(DBPool::new(DBConnectionType::Test));
     let conn = Arc::new(Mutex::new(db_pool.get().await.unwrap()));
     new_rec_msgs
       .insert_batch(conn.clone(), profiler.clone())

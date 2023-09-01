@@ -1,4 +1,5 @@
 mod aggregator;
+mod channel;
 mod epoch;
 mod lake;
 mod lakesink;
@@ -12,17 +13,16 @@ mod star;
 mod util;
 
 use aggregator::start_aggregation;
-use chrono::Duration;
 use clap::{ArgGroup, Parser};
 use dotenvy::dotenv;
 use env_logger::Env;
 use env_logger::Target;
-use epoch::CurrentEpochInfo;
 use epoch::EpochConfig;
 use futures::future::try_join_all;
 use lakesink::start_lakesink;
 use prometheus::{create_metric_server, DataLakeMetrics};
 use prometheus_client::registry::Registry;
+use record_stream::get_data_channel_topic_map_from_env;
 use server::start_server;
 use std::env;
 use std::process;
@@ -61,6 +61,14 @@ struct CliArgs {
   aggregator: bool,
 
   #[clap(
+    short = 'c',
+    long,
+    default_value = "typical",
+    help = "Main data channel to use. See README for details on data channel configuration."
+  )]
+  main_channel_name: String,
+
+  #[clap(
     long,
     help = "Output aggregated measurements to stdout instead of Kafka"
   )]
@@ -76,24 +84,11 @@ struct CliArgs {
   )]
   agg_msg_collect_count: usize,
 
-  #[clap(long, default_value = "604800", help = "Epoch length in seconds")]
-  epoch_length_secs: usize,
-
-  #[clap(
-    long,
-    default_value = "wos",
-    help = "Epoch date field to use when storing results"
-  )]
-  epoch_date_field_name: String,
-
   #[clap(long, default_value = "3", help = "Max iterations for aggregator")]
   agg_iterations: usize,
 
   #[clap(long, default_value = "16", help = "Worker task count for server")]
   server_worker_count: usize,
-
-  #[clap(long, default_value = "2", help = "Kafka consumer count for lake sink")]
-  lakesink_consumer_count: usize,
 
   #[clap(long, help = "Current epoch value to use for testing purposes")]
   test_epoch: Option<u8>,
@@ -123,13 +118,18 @@ async fn main() {
 
     dl_metrics_server = Some(tokio::spawn(create_metric_server(registry, 9089).unwrap()));
 
-    for _ in 0..cli_args.lakesink_consumer_count {
+    let data_channel_topic_map = get_data_channel_topic_map_from_env(true);
+
+    for (channel_name, topic_name) in data_channel_topic_map {
       let dl_metrics = dl_metrics.clone();
 
       let cancel_token = CancellationToken::new();
       let cloned_token = cancel_token.clone();
       dl_tasks.push(tokio::spawn(async move {
+        info!("Starting lake sink for '{}' channel...", channel_name);
         let res = start_lakesink(
+          channel_name,
+          topic_name,
           dl_metrics,
           cloned_token.clone(),
           cli_args.output_measurements_to_stdout,
@@ -145,18 +145,10 @@ async fn main() {
   }
 
   if cli_args.aggregator {
-    let epoch_length = Duration::seconds(cli_args.epoch_length_secs as i64);
-    let current_epoch = if let Some(epoch) = cli_args.test_epoch {
-      CurrentEpochInfo::test_info(epoch, epoch_length)
-    } else {
-      CurrentEpochInfo::retrieve().await
-    };
-    let epoch_config = Arc::new(EpochConfig {
-      current_epoch,
-      epoch_length,
-      epoch_date_field_name: cli_args.epoch_date_field_name,
-    });
+    let epoch_config =
+      Arc::new(EpochConfig::new(cli_args.test_epoch, &cli_args.main_channel_name).await);
     start_aggregation(
+      &cli_args.main_channel_name,
       cli_args.agg_worker_count,
       cli_args.agg_msg_collect_count,
       cli_args.agg_iterations,
@@ -174,7 +166,9 @@ async fn main() {
   }
 
   if cli_args.server {
-    start_server(cli_args.server_worker_count).await.unwrap();
+    start_server(cli_args.server_worker_count, cli_args.main_channel_name)
+      .await
+      .unwrap();
   } else if cli_args.lake_sink {
     dl_metrics_server.unwrap().await.unwrap().unwrap();
     lakesink_cancel_tokens.iter().for_each(|t| t.cancel());

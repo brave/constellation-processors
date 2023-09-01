@@ -1,9 +1,9 @@
-use chrono::prelude::Utc;
 use derive_more::{Display, Error, From};
 use rand::random;
 use rusoto_core::{ByteStream, Region, RusotoError};
 use rusoto_s3::{PutObjectError, PutObjectRequest, S3Client, S3};
 use std::env;
+use time::OffsetDateTime;
 
 const S3_ENDPOINT_ENV_VAR: &str = "S3_ENDPOINT";
 const OUTPUT_S3_BUCKET_ENV_KEY: &str = "S3_OUTPUT_BUCKET";
@@ -47,11 +47,12 @@ impl DataLake {
     }
   }
 
-  pub async fn store(&self, contents: &str) -> Result<(), DataLakeError> {
+  pub async fn store(&self, channel_name: &str, contents: &str) -> Result<(), DataLakeError> {
     let rand_key: u64 = random();
     let full_key = format!(
-      "{}/{}.jsonl",
-      Utc::now().naive_utc().date(),
+      "{}/{}/{}.jsonl",
+      channel_name,
+      OffsetDateTime::now_utc().date(),
       hex::encode(rand_key.to_le_bytes())
     );
     let contents = contents.as_bytes().to_vec();

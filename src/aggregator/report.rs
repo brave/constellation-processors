@@ -1,6 +1,6 @@
 use super::recovered::RecoveredMessages;
 use super::AggregatorError;
-use crate::epoch::{get_epoch_survey_date, EpochConfig};
+use crate::epoch::EpochConfig;
 use crate::profiler::{Profiler, ProfilerStat};
 use crate::record_stream::DynRecordStream;
 use futures::future::{BoxFuture, FutureExt};
@@ -120,7 +120,7 @@ pub async fn report_measurements(
   out_stream: Option<&DynRecordStream>,
   profiler: Arc<Profiler>,
 ) -> Result<i64, AggregatorError> {
-  let epoch_start_date = get_epoch_survey_date(&epoch_config, epoch);
+  let epoch_start_date = epoch_config.get_epoch_survey_date(epoch);
   Ok(
     report_measurements_recursive(
       rec_msgs,
@@ -139,8 +139,9 @@ pub async fn report_measurements(
 
 #[cfg(test)]
 mod tests {
-  use chrono::{Duration, Utc};
+  use calendar_duration::CalendarDuration;
   use serde_json::json;
+  use time::OffsetDateTime;
 
   use super::*;
   use crate::epoch::CurrentEpochInfo;
@@ -148,16 +149,17 @@ mod tests {
   use crate::record_stream::TestRecordStream;
 
   fn test_epoch_config(epoch: u8) -> EpochConfig {
-    let epoch_length = Duration::seconds(604800);
+    let epoch_length = CalendarDuration::from("1w");
     EpochConfig {
       current_epoch: CurrentEpochInfo::test_info(epoch, epoch_length),
       epoch_date_field_name: "wos".to_string(),
       epoch_length,
+      epoch_lifetime_count: 3,
     }
   }
 
   fn expected_date() -> String {
-    Utc::now().date_naive().to_string()
+    OffsetDateTime::now_utc().date().to_string()
   }
 
   #[tokio::test]

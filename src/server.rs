@@ -1,7 +1,7 @@
 use crate::prometheus::{
   create_metric_server, InflightMetricLabels, TotalMetricLabels, WebMetrics,
 };
-use crate::record_stream::{KafkaRecordStream, RecordStreamArc};
+use crate::record_stream::{get_data_channel_topic_map_from_env, KafkaRecordStream, RecordStream};
 use crate::star::{parse_message, AppSTARError};
 use actix_web::{
   dev::Service,
@@ -16,6 +16,7 @@ use base64::{engine::general_purpose as base64_engine, Engine as _};
 use derive_more::{Display, Error, From};
 use futures::{future::try_join, FutureExt};
 use prometheus_client::registry::Registry;
+use std::collections::HashMap;
 use std::str::{from_utf8, Utf8Error};
 use std::sync::Arc;
 use std::time::Instant;
@@ -33,8 +34,9 @@ pub enum WebError {
 }
 
 pub struct ServerState {
-  pub rec_stream: RecordStreamArc,
+  pub channel_rec_streams: HashMap<String, KafkaRecordStream>,
   pub web_metrics: Arc<WebMetrics>,
+  pub main_channel: String,
 }
 
 impl ResponseError for WebError {
@@ -52,8 +54,8 @@ impl ResponseError for WebError {
   }
 }
 
-#[get("/")]
 /// Return an station identification message for data transparency
+#[get("/")]
 async fn ident_handler() -> Result<impl Responder, WebError> {
   Ok(concat!(
     "STAR Constellation aggregation endpoint.\n",
@@ -61,26 +63,60 @@ async fn ident_handler() -> Result<impl Responder, WebError> {
   ))
 }
 
+async fn handle_measurement_submit(
+  body: web::Bytes,
+  state: &ServerState,
+  channel_name: &String,
+) -> Result<impl Responder, WebError> {
+  match state.channel_rec_streams.get(channel_name) {
+    None => Ok(HttpResponse::NotFound().finish()),
+    Some(rec_stream) => {
+      let body_str = from_utf8(&body)?.trim();
+      let bincode_msg = base64_engine::STANDARD.decode(body_str)?;
+      parse_message(&bincode_msg)?;
+      match rec_stream.produce(&bincode_msg).await {
+        Err(e) => {
+          error!("Failed to push message: {}", e);
+          Err(WebError::Internal)
+        }
+        Ok(_) => Ok(HttpResponse::NoContent().finish()),
+      }
+    }
+  }
+}
+
+#[post("/{channel}")]
+async fn channel_handler(
+  body: web::Bytes,
+  state: Data<ServerState>,
+  channel: web::Path<String>,
+) -> Result<impl Responder, WebError> {
+  handle_measurement_submit(body, state.as_ref(), channel.as_ref()).await
+}
+
 #[post("/")]
 async fn main_handler(
   body: web::Bytes,
   state: Data<ServerState>,
 ) -> Result<impl Responder, WebError> {
-  let body_str = from_utf8(&body)?.trim();
-  let bincode_msg = base64_engine::STANDARD.decode(body_str)?;
-  parse_message(&bincode_msg)?;
-  if let Err(e) = state.rec_stream.produce(&bincode_msg).await {
-    error!("Failed to push message: {}", e);
-    Err(WebError::Internal)
-  } else {
-    Ok(HttpResponse::NoContent().finish())
-  }
+  handle_measurement_submit(body, state.as_ref(), &state.main_channel).await
 }
 
-pub async fn start_server(worker_count: usize) -> std::io::Result<()> {
+pub async fn start_server(worker_count: usize, main_channel: String) -> std::io::Result<()> {
+  let channel_rec_streams = get_data_channel_topic_map_from_env(false)
+    .into_iter()
+    .map(|(channel_name, topic_name)| {
+      (
+        channel_name,
+        KafkaRecordStream::new(true, false, topic_name, false),
+      )
+    })
+    .collect();
+
   let state = Data::new(ServerState {
-    rec_stream: Arc::new(KafkaRecordStream::new(true, false, false)),
+    channel_rec_streams,
     web_metrics: Arc::new(WebMetrics::new()),
+    main_channel,
   });
 
   let mut registry = <Registry>::default();
@@ -119,6 +155,7 @@ pub async fn start_server(worker_count: usize) -> std::io::Result<()> {
         })
       })
       .service(ident_handler)
+      .service(channel_handler)
       .service(main_handler)
   })
   .workers(worker_count)

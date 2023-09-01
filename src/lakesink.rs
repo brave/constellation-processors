@@ -24,6 +24,7 @@ pub enum LakeSinkError {
 async fn store_batch(
   lake: &DataLake,
   rec_stream: &DynRecordStream,
+  channel_name: &str,
   batch: &[Vec<u8>],
   metrics: &DataLakeMetrics,
 ) -> Result<(), LakeSinkError> {
@@ -32,7 +33,7 @@ async fn store_batch(
     .map(|v| from_utf8(v).map(|v| v.to_string()))
     .collect::<Result<Vec<String>, Utf8Error>>()?;
   let contents = json_lines.join("\n");
-  lake.store(&contents).await?;
+  lake.store(channel_name, &contents).await?;
 
   rec_stream.commit_last_consume().await?;
 
@@ -42,13 +43,15 @@ async fn store_batch(
 }
 
 pub async fn start_lakesink(
+  channel_name: String,
+  stream_topic: String,
   metrics: Arc<DataLakeMetrics>,
   cancel_token: CancellationToken,
   output_measurements_to_stdout: bool,
 ) -> Result<(), LakeSinkError> {
   let batch_size = parse_env_var::<usize>(BATCH_SIZE_ENV_KEY, BATCH_SIZE_DEFAULT);
 
-  let rec_stream = KafkaRecordStream::new(false, true, true);
+  let rec_stream = KafkaRecordStream::new(false, true, stream_topic, true);
 
   let lake = if output_measurements_to_stdout {
     None
@@ -66,7 +69,7 @@ pub async fn start_lakesink(
           Some(lake) => {
             batch.push(record);
             if batch.len() >= batch_size {
-              store_batch(lake, &rec_stream, &batch, &metrics).await?;
+              store_batch(lake, &rec_stream, &channel_name, &batch, &metrics).await?;
               batch.clear();
             }
           },
@@ -79,7 +82,7 @@ pub async fn start_lakesink(
       _ = sleep(batch_timeout) => {
         if let Some(lake) = lake.as_ref() {
           if !batch.is_empty() {
-            store_batch(lake, &rec_stream, &batch, &metrics).await?;
+            store_batch(lake, &rec_stream, &channel_name, &batch, &metrics).await?;
             batch.clear();
           }
         }
@@ -88,7 +91,7 @@ pub async fn start_lakesink(
         info!("Ending lakesink task...");
         if let Some(lake) = lake.as_ref() {
           if !batch.is_empty() {
-            store_batch(lake, &rec_stream, &batch, &metrics).await?;
+            store_batch(lake, &rec_stream, &channel_name, &batch, &metrics).await?;
           }
         }
         break;

@@ -6,10 +6,14 @@ mod report;
 
 use crate::epoch::EpochConfig;
 use crate::models::{
-  begin_db_transaction, commit_db_transaction, DBPool, DBStorageConnections, PgStoreError,
+  begin_db_transaction, commit_db_transaction, DBConnectionType, DBPool, DBStorageConnections,
+  PgStoreError,
 };
 use crate::profiler::{Profiler, ProfilerStat};
-use crate::record_stream::{KafkaRecordStream, RecordStream, RecordStreamArc, RecordStreamError};
+use crate::record_stream::{
+  get_data_channel_topic_from_env, KafkaRecordStream, RecordStream, RecordStreamArc,
+  RecordStreamError,
+};
 use crate::star::AppSTARError;
 use crate::util::parse_env_var;
 use consume::consume_and_group;
@@ -43,11 +47,13 @@ pub enum AggregatorError {
 
 fn create_output_stream(
   output_measurements_to_stdout: bool,
+  channel_name: &str,
 ) -> Result<Option<RecordStreamArc>, AggregatorError> {
+  let topic = get_data_channel_topic_from_env(true, channel_name);
   Ok(if output_measurements_to_stdout {
     None
   } else {
-    let out_stream = Arc::new(KafkaRecordStream::new(true, false, true));
+    let out_stream = Arc::new(KafkaRecordStream::new(true, false, topic, true));
     out_stream.init_producer_transactions()?;
     Some(out_stream)
   })
@@ -62,6 +68,7 @@ async fn wait_and_commit_producer(out_stream: &RecordStreamArc) -> Result<(), Ag
 }
 
 pub async fn start_aggregation(
+  channel_name: &str,
   worker_count: usize,
   msg_collect_count: usize,
   iterations: usize,
@@ -74,15 +81,21 @@ pub async fn start_aggregation(
   let min_msgs_to_process =
     parse_env_var::<usize>(MIN_MSGS_TO_PROCESS_ENV_KEY, MIN_MSGS_TO_PROCESS_DEFAULT);
 
-  let db_pool = Arc::new(DBPool::new(false));
+  let db_pool = Arc::new(DBPool::new(DBConnectionType::Normal { channel_name }));
 
   info!("Starting aggregation...");
 
-  let out_stream = create_output_stream(output_measurements_to_stdout)?;
+  let out_stream = create_output_stream(output_measurements_to_stdout, channel_name)?;
 
   let mut in_streams: Vec<RecordStreamArc> = Vec::new();
+  let in_stream_topic = get_data_channel_topic_from_env(false, channel_name);
   for _ in 0..CONSUMER_COUNT {
-    in_streams.push(Arc::new(KafkaRecordStream::new(false, true, false)));
+    in_streams.push(Arc::new(KafkaRecordStream::new(
+      false,
+      true,
+      in_stream_topic.clone(),
+      false,
+    )));
   }
 
   for i in 0..iterations {
@@ -177,7 +190,7 @@ pub async fn start_aggregation(
   // Delete pending/recovered messages from DB.
   info!("Checking/processing expired epochs");
   let profiler = Arc::new(Profiler::default());
-  let mut out_stream = create_output_stream(output_measurements_to_stdout)?;
+  let mut out_stream = create_output_stream(output_measurements_to_stdout, channel_name)?;
   if let Some(out_stream) = out_stream.as_mut() {
     out_stream.init_producer_queues().await;
     out_stream.begin_producer_transaction()?;
