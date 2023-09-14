@@ -28,7 +28,7 @@ pub struct MsgRecoveryInfo {
 
 pub fn parse_message(bincode_msg: &[u8]) -> Result<NestedMessage, AppSTARError> {
   let smsg: SerializableNestedMessage = bincode::deserialize(bincode_msg)?;
-  Ok(NestedMessage::from(smsg))
+  Ok(NestedMessage::try_from(smsg)?)
 }
 
 pub fn serialize_message_bincode(message: NestedMessage) -> Result<Vec<u8>, AppSTARError> {
@@ -147,6 +147,6 @@ pub mod tests {
       client::construct_message(&points_slice_vec, None, &rrs, &None, &[], k_threshold).unwrap();
     let serialized_msg: SerializableNestedMessage =
       bincode::deserialize(&serialized_msg_bytes).unwrap();
-    NestedMessage::from(serialized_msg)
+    NestedMessage::try_from(serialized_msg).unwrap()
   }
 }
