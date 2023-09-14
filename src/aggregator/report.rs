@@ -7,8 +7,16 @@ use futures::future::{BoxFuture, FutureExt};
 use serde_json::Value;
 use std::collections::HashMap;
 use std::str::from_utf8;
-use std::sync::Arc;
 use std::time::Instant;
+
+pub struct MeasurementReporter<'a> {
+  epoch_config: &'a EpochConfig,
+  out_stream: Option<&'a DynRecordStream>,
+  profiler: &'a Profiler,
+  epoch: u8,
+  epoch_start_date: String,
+  partial_report: bool,
+}
 
 fn build_full_measurement_json(
   metric_chain: Vec<(String, Value)>,
@@ -28,113 +36,102 @@ fn build_full_measurement_json(
   Ok(serde_json::to_vec(&full_measurement)?)
 }
 
-fn report_measurements_recursive<'a>(
-  rec_msgs: &'a mut RecoveredMessages,
-  epoch: u8,
-  epoch_date_field_name: &'a str,
-  epoch_start_date: &'a str,
-  partial_report: bool,
-  out_stream: Option<&'a DynRecordStream>,
-  metric_chain: Vec<(String, Value)>,
-  parent_msg_tag: Option<Vec<u8>>,
-  profiler: Arc<Profiler>,
-) -> BoxFuture<'a, Result<i64, AggregatorError>> {
-  async move {
-    let tags = rec_msgs.get_tags_by_parent(epoch, parent_msg_tag);
-
-    let mut recovered_count = 0;
-
-    for tag in tags {
-      let mut msg = rec_msgs.get_mut(epoch, &tag).unwrap().clone();
-      if msg.count == 0 {
-        continue;
-      }
-
-      let mut metric_chain = metric_chain.clone();
-      metric_chain.push((msg.metric_name.clone(), msg.metric_value.clone().into()));
-
-      // is_msmt_final: true if the current measurement should be reported right now
-      // i.e. all layers have been recovered
-      let is_msmt_final = if msg.has_children {
-        let children_rec_count = report_measurements_recursive(
-          rec_msgs,
-          epoch,
-          epoch_date_field_name,
-          epoch_start_date,
-          partial_report,
-          out_stream,
-          metric_chain.clone(),
-          Some(tag),
-          profiler.clone(),
-        )
-        .await?;
-
-        msg.count -= children_rec_count;
-
-        if msg.count > 0 && partial_report {
-          // partial_report is typically true during an expired epoch report.
-          // If the count for the current tag is non-zero, and child tags cannot be recovered,
-          // report the partial measurements now.
-          true
-        } else {
-          recovered_count += children_rec_count;
-          false
-        }
-      } else {
-        // if there are no children, we have recovered all tags in the metric chain;
-        // we can safely report the final measurement
-        true
-      };
-
-      if is_msmt_final {
-        recovered_count += msg.count;
-        let full_msmt = build_full_measurement_json(
-          metric_chain,
-          epoch_date_field_name,
-          epoch_start_date,
-          msg.count,
-        )?;
-        let start_instant = Instant::now();
-        match out_stream {
-          Some(o) => o.queue_produce(full_msmt).await?,
-          None => println!("{}", from_utf8(&full_msmt)?),
-        };
-        profiler
-          .record_range_time(ProfilerStat::OutStreamProduceTime, start_instant)
-          .await;
-        msg.count = 0;
-      }
-      rec_msgs.add(msg);
-    }
-
-    Ok(recovered_count)
-  }
-  .boxed()
-}
-
-pub async fn report_measurements(
-  rec_msgs: &mut RecoveredMessages,
-  epoch_config: &EpochConfig,
-  epoch: u8,
-  partial_report: bool,
-  out_stream: Option<&DynRecordStream>,
-  profiler: Arc<Profiler>,
-) -> Result<i64, AggregatorError> {
-  let epoch_start_date = get_epoch_survey_date(&epoch_config, epoch);
-  Ok(
-    report_measurements_recursive(
-      rec_msgs,
-      epoch,
-      &epoch_config.epoch_date_field_name,
-      &epoch_start_date,
-      partial_report,
+impl<'a> MeasurementReporter<'a> {
+  pub fn new(
+    epoch_config: &'a EpochConfig,
+    out_stream: Option<&'a DynRecordStream>,
+    profiler: &'a Profiler,
+    epoch: u8,
+    partial_report: bool,
+  ) -> Self {
+    let epoch_start_date = get_epoch_survey_date(&epoch_config, epoch);
+    Self {
+      epoch_config,
       out_stream,
-      Vec::new(),
-      None,
       profiler,
-    )
-    .await?,
-  )
+      epoch,
+      epoch_start_date,
+      partial_report,
+    }
+  }
+
+  fn report_recursive(
+    &'a self,
+    rec_msgs: &'a mut RecoveredMessages,
+    metric_chain: Vec<(String, Value)>,
+    parent_msg_tag: Option<Vec<u8>>,
+  ) -> BoxFuture<'a, Result<i64, AggregatorError>> {
+    async move {
+      let tags = rec_msgs.get_tags_by_parent(self.epoch, parent_msg_tag);
+
+      let mut recovered_count = 0;
+
+      for tag in tags {
+        let mut msg = rec_msgs.get_mut(self.epoch, &tag).unwrap().clone();
+        if msg.count == 0 {
+          continue;
+        }
+
+        let mut metric_chain = metric_chain.clone();
+        metric_chain.push((msg.metric_name.clone(), msg.metric_value.clone().into()));
+
+        // is_msmt_final: true if the current measurement should be reported right now
+        // i.e. all layers have been recovered, or a partial report was requested for an old epoch
+        let is_msmt_final = if msg.has_children {
+          let children_rec_count = self
+            .report_recursive(rec_msgs, metric_chain.clone(), Some(tag))
+            .await?;
+
+          msg.count -= children_rec_count;
+
+          if msg.count > 0 && self.partial_report {
+            // partial_report is typically true during an expired epoch report.
+            // If the count for the current tag is non-zero, and child tags cannot be recovered,
+            // report the partial measurements now.
+            true
+          } else {
+            recovered_count += children_rec_count;
+            false
+          }
+        } else {
+          // if there are no children, we have recovered all tags in the metric chain;
+          // we can safely report the final measurement
+          true
+        };
+
+        if is_msmt_final {
+          recovered_count += msg.count;
+          let full_msmt = build_full_measurement_json(
+            metric_chain,
+            &self.epoch_config.epoch_date_field_name,
+            &self.epoch_start_date,
+            msg.count,
+          )?;
+          let start_instant = Instant::now();
+          match self.out_stream {
+            Some(o) => o.queue_produce(full_msmt).await?,
+            None => println!("{}", from_utf8(&full_msmt)?),
+          };
+          self
+            .profiler
+            .record_range_time(ProfilerStat::OutStreamProduceTime, start_instant)
+            .await;
+          msg.count = 0;
+        }
+        rec_msgs.add(msg);
+      }
+
+      Ok(recovered_count)
+    }
+    .boxed()
+  }
+
+  pub async fn report(
+    &'a self,
+    rec_msgs: &'a mut RecoveredMessages,
+  ) -> Result<i64, AggregatorError> {
+    self.report_recursive(rec_msgs, Vec::new(), None).await
+  }
 }
 
 #[cfg(test)]
@@ -164,7 +161,7 @@ mod tests {
   async fn full_report() {
     let record_stream = TestRecordStream::default();
     let mut recovered_msgs = RecoveredMessages::default();
-    let profiler = Arc::new(Profiler::default());
+    let profiler = Profiler::default();
 
     let new_rec_msgs = vec![
       RecoveredMessage {
@@ -227,16 +224,10 @@ mod tests {
     for rec_msg in new_rec_msgs {
       recovered_msgs.add(rec_msg);
     }
-    let rec_count = report_measurements(
-      &mut recovered_msgs,
-      &test_epoch_config(2),
-      2,
-      false,
-      Some(&record_stream),
-      profiler,
-    )
-    .await
-    .unwrap();
+    let epoch_config = test_epoch_config(2);
+    let reporter =
+      MeasurementReporter::new(&epoch_config, Some(&record_stream), &profiler, 2, false);
+    let rec_count = reporter.report(&mut recovered_msgs).await.unwrap();
 
     assert_eq!(rec_count, 17);
     let records = parse_and_sort_records(record_stream.records_produced.into_inner());
@@ -265,7 +256,7 @@ mod tests {
   async fn partial_report() {
     let record_stream = TestRecordStream::default();
     let mut recovered_msgs = RecoveredMessages::default();
-    let profiler = Arc::new(Profiler::default());
+    let profiler = Profiler::default();
 
     let new_rec_msgs = vec![
       RecoveredMessage {
@@ -328,16 +319,10 @@ mod tests {
     for rec_msg in new_rec_msgs {
       recovered_msgs.add(rec_msg);
     }
-    report_measurements(
-      &mut recovered_msgs,
-      &test_epoch_config(2),
-      2,
-      true,
-      Some(&record_stream),
-      profiler,
-    )
-    .await
-    .unwrap();
+    let epoch_config = test_epoch_config(2);
+    let reporter =
+      MeasurementReporter::new(&epoch_config, Some(&record_stream), &profiler, 2, true);
+    reporter.report(&mut recovered_msgs).await.unwrap();
 
     let records = parse_and_sort_records(record_stream.records_produced.into_inner());
 

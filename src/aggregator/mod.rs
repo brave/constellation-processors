@@ -188,7 +188,7 @@ pub async fn start_aggregation(
     db_conn.clone(),
     &epoch_config,
     out_stream.as_ref().map(|v| v.as_ref()),
-    profiler.clone(),
+    profiler.as_ref(),
   )
   .await?;
   if let Some(out_stream) = out_stream.as_ref() {

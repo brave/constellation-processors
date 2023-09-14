@@ -87,7 +87,7 @@ impl GroupedMessages {
 
               for tag in tags {
                 let msgs =
-                  PendingMessage::list(conn.clone(), epoch, tag.clone(), profiler.clone()).await?;
+                  PendingMessage::list(conn.clone(), epoch, tag.clone(), profiler.as_ref()).await?;
                 pending_msgs.insert(tag, msgs);
               }
               Ok(pending_msgs)
@@ -132,7 +132,7 @@ impl GroupedMessages {
         for new_msgs in new_pending_msgs.chunks(INSERT_BATCH_SIZE) {
           let new_msgs = new_msgs.to_vec();
           new_msgs
-            .insert_batch(store_conns.get(), profiler.clone())
+            .insert_batch(store_conns.get(), profiler.as_ref())
             .await?;
         }
       }
@@ -338,7 +338,7 @@ mod tests {
     let db_pool = Arc::new(DBPool::new(true));
     let conn = Arc::new(Mutex::new(db_pool.get().await.unwrap()));
     new_rec_msgs
-      .insert_batch(conn.clone(), profiler.clone())
+      .insert_batch(conn.clone(), profiler.as_ref())
       .await
       .unwrap();
     drop(conn);

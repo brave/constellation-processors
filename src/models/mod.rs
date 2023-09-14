@@ -144,7 +144,7 @@ pub trait BatchInsert<T> {
   async fn insert_batch(
     self,
     conn: Arc<Mutex<DBConnection>>,
-    profiler: Arc<Profiler>,
+    profiler: &Profiler,
   ) -> Result<(), PgStoreError>;
 }
 

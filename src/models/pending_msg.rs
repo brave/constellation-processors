@@ -30,7 +30,7 @@ impl PendingMessage {
     conn: Arc<Mutex<DBConnection>>,
     filter_epoch_tag: i16,
     filter_msg_tag: Vec<u8>,
-    profiler: Arc<Profiler>,
+    profiler: &Profiler,
   ) -> Result<Vec<Self>, PgStoreError> {
     let start_instant = Instant::now();
     let result = task::spawn_blocking(move || {
@@ -53,7 +53,7 @@ impl PendingMessage {
   pub async fn delete_epoch(
     conn: Arc<Mutex<DBConnection>>,
     filter_epoch_tag: i16,
-    profiler: Arc<Profiler>,
+    profiler: &Profiler,
   ) -> Result<(), PgStoreError> {
     let start_instant = Instant::now();
     let result = task::spawn_blocking(move || {
@@ -74,7 +74,7 @@ impl PendingMessage {
     conn: Arc<Mutex<DBConnection>>,
     filter_epoch_tag: i16,
     filter_msg_tag: Vec<u8>,
-    profiler: Arc<Profiler>,
+    profiler: &Profiler,
   ) -> Result<(), PgStoreError> {
     let start_instant = Instant::now();
     let result = task::spawn_blocking(move || {
@@ -101,7 +101,7 @@ impl BatchInsert<NewPendingMessage> for Vec<NewPendingMessage> {
   async fn insert_batch(
     self,
     conn: Arc<Mutex<DBConnection>>,
-    profiler: Arc<Profiler>,
+    profiler: &Profiler,
   ) -> Result<(), PgStoreError> {
     let start_instant = Instant::now();
     let result = task::spawn_blocking(move || {
