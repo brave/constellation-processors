@@ -212,7 +212,8 @@ checksum = "f26201604c87b1e01bd3d98f8d5d9a8fcbb815e8cedb41ffccbeb4bf593a35fe"
 [[package]]
 name = "adss"
 version = "0.2.2"
-source = "git+https://github.com/brave/sta-rs?rev=2d1c714ae2b15f93e8c58b0aa0b7e1f88fe12f39#2d1c714ae2b15f93e8c58b0aa0b7e1f88fe12f39"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "766a68b8837e590be40019eebe4d70d61e800b2895a9741788e8f2b78927b9df"
 dependencies = [
  "rand",
  "rand_core",
@@ -555,7 +556,7 @@ checksum = "acbf1af155f9b9ef647e42cdc158db4b64a1b61f743629225fde6f3e0be2a7c7"
 
 [[package]]
 name = "constellation-processors"
-version = "1.0.0"
+version = "1.1.0"
 dependencies = [
  "actix-web",
  "async-trait",
@@ -1749,23 +1750,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "ppoprf"
-version = "0.3.1"
-source = "git+https://github.com/brave/sta-rs?rev=2d1c714ae2b15f93e8c58b0aa0b7e1f88fe12f39#2d1c714ae2b15f93e8c58b0aa0b7e1f88fe12f39"
-dependencies = [
- "base64 0.13.1",
- "bincode",
- "bitvec",
- "curve25519-dalek",
- "derive_more",
- "rand",
- "rand_core",
- "serde",
- "strobe-rs",
- "zeroize",
-]
-
-[[package]]
 name = "ppv-lite86"
 version = "0.2.17"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2439,10 +2423,11 @@ dependencies = [
 [[package]]
 name = "sta-rs"
 version = "0.2.2"
-source = "git+https://github.com/brave/sta-rs?rev=2d1c714ae2b15f93e8c58b0aa0b7e1f88fe12f39#2d1c714ae2b15f93e8c58b0aa0b7e1f88fe12f39"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "eafa25c94ddb02f8e90d57f66d39f1e3bb4f0857344b5e53b2254ea25764484b"
 dependencies = [
  "adss",
- "ppoprf 0.3.1 (git+https://github.com/brave/sta-rs?rev=2d1c714ae2b15f93e8c58b0aa0b7e1f88fe12f39)",
+ "ppoprf",
  "rand",
  "rand_core",
  "strobe-rs",
@@ -2452,11 +2437,12 @@ dependencies = [
 [[package]]
 name = "star-constellation"
 version = "0.2.2"
-source = "git+https://github.com/brave/constellation?rev=404725a562c30b1aac6df78333069eea6739ebdd#404725a562c30b1aac6df78333069eea6739ebdd"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "64f81659cf6563195cb620acdf361323fff1ac6271ae3c38368aab83e5384301"
 dependencies = [
  "bincode",
  "lazy_static",
- "ppoprf 0.3.1 (registry+https://github.com/rust-lang/crates.io-index)",
+ "ppoprf",
  "rand",
  "serde",
  "serde_json",
@@ -2465,8 +2451,9 @@ dependencies = [
 
 [[package]]
 name = "star-sharks"
-version = "0.6.0"
-source = "git+https://github.com/brave/sta-rs?rev=2d1c714ae2b15f93e8c58b0aa0b7e1f88fe12f39#2d1c714ae2b15f93e8c58b0aa0b7e1f88fe12f39"
+version = "0.6.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "d709d58897c7318f71e6a9fd2de38e7d0420ec256d816fbb5580b5b95987cd35"
 dependencies = [
  "bitvec",
  "byteorder",
