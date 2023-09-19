@@ -107,7 +107,7 @@ pub async fn start_aggregation(
 
     if count < min_msgs_to_process {
       info!("Message count too low, finished aggregation");
-      return Ok(());
+      break;
     }
 
     profiler
