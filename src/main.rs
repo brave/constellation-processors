@@ -16,6 +16,7 @@ use chrono::Duration;
 use clap::{ArgGroup, Parser};
 use dotenvy::dotenv;
 use env_logger::Env;
+use env_logger::Target;
 use epoch::CurrentEpochInfo;
 use epoch::EpochConfig;
 use futures::future::try_join_all;
@@ -103,7 +104,9 @@ async fn main() {
   let cli_args = CliArgs::parse();
 
   dotenv().ok();
-  env_logger::Builder::from_env(Env::default().default_filter_or("info")).init();
+  env_logger::Builder::from_env(Env::default().default_filter_or("info"))
+    .target(Target::Stderr)
+    .init();
 
   let _sentry_guard = env::var(SENTRY_DSN_ENV_KEY)
     .ok()
