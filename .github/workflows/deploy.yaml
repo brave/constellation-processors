@@ -11,12 +11,12 @@ jobs:
     runs-on: ubuntu-latest
     steps:
     - name: Checkout
-      uses: actions/checkout@v3
+      uses: actions/checkout@f43a0e5ff2bd294095638e18286ca9a3d1956744 # v3.6.0
     - name: Configure AWS Credentials
-      uses: aws-actions/configure-aws-credentials@v3
+      uses: aws-actions/configure-aws-credentials@50ac8dd1e1b10d09dac7b8727528b91bed831ac0 # v3.0.2
       with:
         aws-access-key-id: ${{ secrets.GDBP_AWS_ACCESS_KEY_ID }}
         aws-secret-access-key: ${{ secrets.GDBP_AWS_SECRET_ACCESS_KEY }}
         aws-region: us-west-2
     - name: Generalized Deployments
-      uses: brave-intl/general-docker-build-pipeline-action@v1
+      uses: brave-intl/general-docker-build-pipeline-action@26516f4d579490c27e3b9dcc199f276f61f8d674 # v1.0.10
