@@ -70,6 +70,7 @@ fn report_measurements_recursive<'a>(
         .await?;
 
         msg.count -= children_rec_count;
+        recovered_count += children_rec_count;
 
         if msg.count > 0 && partial_report {
           // partial_report is typically true during an expired epoch report.
@@ -77,7 +78,6 @@ fn report_measurements_recursive<'a>(
           // report the partial measurements now.
           true
         } else {
-          recovered_count += children_rec_count;
           false
         }
       } else {
