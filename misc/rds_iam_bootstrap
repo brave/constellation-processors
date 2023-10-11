@@ -23,7 +23,7 @@ DATABASE_PASSWORD="$(aws rds generate-db-auth-token \
 --region $DATABASE_REGION \
 --user $DATABASE_USER | urlencode)"
 
-export DATABASE_URL="postgres://$DATABASE_USER:$DATABASE_PASSWORD@$DATABASE_HOST/$DATABASE_INSTANCE"
+export DATABASE_URL="postgres://$DATABASE_USER:$DATABASE_PASSWORD@$DATABASE_HOST"
 
 constellation-processors $@
 

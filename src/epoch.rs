@@ -11,6 +11,9 @@ const LAST_EPOCH: u8 = 255u8;
 const EPOCH_LIFETIMES_ENV_KEY: &str = "EPOCH_LIFETIMES";
 const DEFAULT_EPOCH_LIFETIMES: &str = "typical=3";
 
+const RANDOMNESS_INSTANCE_NAMES_ENV_KEY: &str = "RANDOMNESS_INSTANCE_NAMES";
+const DEFAULT_RANDOMNESS_INSTANCE_NAMES: &str = "typical=typical";
+
 const RANDOMNESS_HOST_ENV_KEY: &str = "RANDOMNESS_HOST";
 const DISABLE_RANDOMNESS_TLS_VALIDATION_ENV_KEY: &str = "DISABLE_RANDOMNESS_TLS_VALIDATION";
 
@@ -34,7 +37,12 @@ impl CurrentEpochInfo {
     if env::var(DISABLE_RANDOMNESS_TLS_VALIDATION_ENV_KEY).unwrap_or("".to_string()) == "true" {
       client_builder = client_builder.danger_accept_invalid_certs(true);
     }
-    let path = format!("instances/{}/info", channel_name);
+    let instance_name = get_data_channel_value_from_env(
+      RANDOMNESS_INSTANCE_NAMES_ENV_KEY,
+      DEFAULT_RANDOMNESS_INSTANCE_NAMES,
+      channel_name,
+    );
+    let path = format!("instances/{}/info", instance_name);
     let client = client_builder.build().unwrap();
     let randomness_info_url = reqwest::Url::parse(
       &env::var(RANDOMNESS_HOST_ENV_KEY)
