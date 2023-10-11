@@ -1,3 +1,7 @@
+//! Handles parsing of "channel maps" defined in environment variables.
+//! Each channel map entry is formatted like so: <channel name>=<value for channel>
+//! For example: slow=mos,typical=wos,express=dtos
+
 use std::{collections::HashMap, env};
 
 pub fn get_data_channel_map_from_env(env_key: &str, default: &str) -> HashMap<String, String> {

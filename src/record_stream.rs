@@ -96,6 +96,13 @@ pub trait RecordStream {
 pub type DynRecordStream = dyn RecordStream + Send + Sync;
 pub type RecordStreamArc = Arc<DynRecordStream>;
 
+pub struct KafkaRecordStreamConfig {
+  pub enable_producer: bool,
+  pub enable_consumer: bool,
+  pub topic: String,
+  pub use_output_group_id: bool,
+}
+
 pub struct KafkaRecordStream {
   producer: Option<Arc<FutureProducer<KafkaContext>>>,
   consumer: Option<StreamConsumer<KafkaContext>>,
@@ -131,13 +138,8 @@ pub fn get_data_channel_topic_from_env(use_output_topic: bool, channel_name: &st
 }
 
 impl KafkaRecordStream {
-  pub fn new(
-    enable_producer: bool,
-    enable_consumer: bool,
-    topic: String,
-    use_output_group_id: bool,
-  ) -> Self {
-    let group_id = match use_output_group_id {
+  pub fn new(stream_config: KafkaRecordStreamConfig) -> Self {
+    let group_id = match stream_config.use_output_group_id {
       true => "star-agg-dec",
       false => "star-agg-enc",
     };
@@ -145,14 +147,14 @@ impl KafkaRecordStream {
     let mut result = Self {
       producer: None,
       consumer: None,
-      topic: topic.clone(),
+      topic: stream_config.topic.clone(),
       producer_queues: RwLock::new(Vec::new()),
     };
-    if enable_producer {
+    if stream_config.enable_producer {
       let context = KafkaContext;
       let mut config = Self::new_client_config();
       let mut config_ref = &mut config;
-      if use_output_group_id {
+      if stream_config.use_output_group_id {
         config_ref = config_ref.set("transactional.id", "main");
       }
       result.producer = Some(Arc::new(
@@ -164,9 +166,9 @@ impl KafkaRecordStream {
           .create_with_context(context)
           .unwrap(),
       ));
-      info!("Producing to topic: {}", topic);
+      info!("Producing to topic: {}", stream_config.topic);
     }
-    if enable_consumer {
+    if stream_config.enable_consumer {
       let context = KafkaContext;
       let mut config = Self::new_client_config();
       result.consumer = Some(
@@ -182,14 +184,14 @@ impl KafkaRecordStream {
       );
       info!(
         "Consuming from topic: {} (current offsets: {:?})",
-        topic,
+        stream_config.topic,
         result.consumer.as_ref().unwrap().position().unwrap()
       );
       result
         .consumer
         .as_ref()
         .unwrap()
-        .subscribe(&[&topic])
+        .subscribe(&[&stream_config.topic])
         .unwrap();
     }
     result

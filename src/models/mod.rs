@@ -51,7 +51,7 @@ pub struct DBPool {
   inner_pool: Pool<ConnectionManager<PgConnection>>,
 }
 
-fn get_channel_db_url<'a>(conn_type: &DBConnectionType<'a>) -> String {
+fn get_channel_db_url(conn_type: &DBConnectionType<'_>) -> String {
   let env_key = match conn_type {
     DBConnectionType::Test => TEST_DATABASE_URL_ENV_KEY,
     DBConnectionType::Normal { .. } => DATABASE_URL_ENV_KEY,

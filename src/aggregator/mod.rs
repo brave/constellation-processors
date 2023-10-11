@@ -11,8 +11,8 @@ use crate::models::{
 };
 use crate::profiler::{Profiler, ProfilerStat};
 use crate::record_stream::{
-  get_data_channel_topic_from_env, KafkaRecordStream, RecordStream, RecordStreamArc,
-  RecordStreamError,
+  get_data_channel_topic_from_env, KafkaRecordStream, KafkaRecordStreamConfig, RecordStream,
+  RecordStreamArc, RecordStreamError,
 };
 use crate::star::AppSTARError;
 use crate::util::parse_env_var;
@@ -53,7 +53,12 @@ fn create_output_stream(
   Ok(if output_measurements_to_stdout {
     None
   } else {
-    let out_stream = Arc::new(KafkaRecordStream::new(true, false, topic, true));
+    let out_stream = Arc::new(KafkaRecordStream::new(KafkaRecordStreamConfig {
+      enable_producer: true,
+      enable_consumer: false,
+      topic,
+      use_output_group_id: true,
+    }));
     out_stream.init_producer_transactions()?;
     Some(out_stream)
   })
@@ -90,12 +95,12 @@ pub async fn start_aggregation(
   let mut in_streams: Vec<RecordStreamArc> = Vec::new();
   let in_stream_topic = get_data_channel_topic_from_env(false, channel_name);
   for _ in 0..CONSUMER_COUNT {
-    in_streams.push(Arc::new(KafkaRecordStream::new(
-      false,
-      true,
-      in_stream_topic.clone(),
-      false,
-    )));
+    in_streams.push(Arc::new(KafkaRecordStream::new(KafkaRecordStreamConfig {
+      enable_producer: false,
+      enable_consumer: true,
+      topic: in_stream_topic.clone(),
+      use_output_group_id: false,
+    })));
   }
 
   for i in 0..iterations {

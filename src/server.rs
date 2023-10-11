@@ -1,7 +1,9 @@
 use crate::prometheus::{
   create_metric_server, InflightMetricLabels, TotalMetricLabels, WebMetrics,
 };
-use crate::record_stream::{get_data_channel_topic_map_from_env, KafkaRecordStream, RecordStream};
+use crate::record_stream::{
+  get_data_channel_topic_map_from_env, KafkaRecordStream, KafkaRecordStreamConfig, RecordStream,
+};
 use crate::star::{parse_message, AppSTARError};
 use actix_web::{
   dev::Service,
@@ -105,10 +107,15 @@ async fn main_handler(
 pub async fn start_server(worker_count: usize, main_channel: String) -> std::io::Result<()> {
   let channel_rec_streams = get_data_channel_topic_map_from_env(false)
     .into_iter()
-    .map(|(channel_name, topic_name)| {
+    .map(|(channel_name, topic)| {
       (
         channel_name,
-        KafkaRecordStream::new(true, false, topic_name, false),
+        KafkaRecordStream::new(KafkaRecordStreamConfig {
+          enable_producer: true,
+          enable_consumer: false,
+          topic,
+          use_output_group_id: false,
+        }),
       )
     })
     .collect();

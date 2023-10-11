@@ -1,6 +1,8 @@
 use crate::lake::{DataLake, DataLakeError};
 use crate::prometheus::DataLakeMetrics;
-use crate::record_stream::{DynRecordStream, KafkaRecordStream, RecordStream, RecordStreamError};
+use crate::record_stream::{
+  DynRecordStream, KafkaRecordStream, KafkaRecordStreamConfig, RecordStream, RecordStreamError,
+};
 use crate::util::parse_env_var;
 use derive_more::{Display, Error, From};
 use std::str::{from_utf8, Utf8Error};
@@ -51,7 +53,12 @@ pub async fn start_lakesink(
 ) -> Result<(), LakeSinkError> {
   let batch_size = parse_env_var::<usize>(BATCH_SIZE_ENV_KEY, BATCH_SIZE_DEFAULT);
 
-  let rec_stream = KafkaRecordStream::new(false, true, stream_topic, true);
+  let rec_stream = KafkaRecordStream::new(KafkaRecordStreamConfig {
+    enable_producer: false,
+    enable_consumer: true,
+    topic: stream_topic,
+    use_output_group_id: true,
+  });
 
   let lake = if output_measurements_to_stdout {
     None
