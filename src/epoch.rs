@@ -22,23 +22,26 @@ const DEFAULT_EPOCH_DATE_FIELD_NAMES: &str = "typical=wos";
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct CurrentEpochInfo {
+  #[serde(rename = "currentEpoch")]
   pub epoch: u8,
+  #[serde(deserialize_with = "time::serde::rfc3339::deserialize")]
   pub next_epoch_time: OffsetDateTime,
 }
 
 impl CurrentEpochInfo {
-  pub async fn retrieve() -> Self {
+  pub async fn retrieve(channel_name: &str) -> Self {
     let mut client_builder = reqwest::ClientBuilder::new();
     if env::var(DISABLE_RANDOMNESS_TLS_VALIDATION_ENV_KEY).unwrap_or("".to_string()) == "true" {
       client_builder = client_builder.danger_accept_invalid_certs(true);
     }
+    let path = format!("instances/{}/info", channel_name);
     let client = client_builder.build().unwrap();
     let randomness_info_url = reqwest::Url::parse(
       &env::var(RANDOMNESS_HOST_ENV_KEY)
         .expect(&format!("{} env var not defined", RANDOMNESS_HOST_ENV_KEY)),
     )
     .unwrap()
-    .join("info")
+    .join(&path)
     .unwrap();
     client
       .get(randomness_info_url)
@@ -89,7 +92,7 @@ impl EpochConfig {
     );
     let current_epoch = match test_epoch {
       Some(epoch) => CurrentEpochInfo::test_info(epoch, epoch_length),
-      None => CurrentEpochInfo::retrieve().await,
+      None => CurrentEpochInfo::retrieve(channel_name).await,
     };
     Self {
       current_epoch,
