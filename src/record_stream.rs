@@ -12,6 +12,7 @@ use rdkafka::message::Message;
 use rdkafka::producer::{future_producer::FutureProducer, FutureRecord, Producer};
 use rdkafka::types::RDKafkaErrorCode;
 use rdkafka::TopicPartitionList;
+use std::collections::HashMap;
 use std::env;
 use std::sync::Arc;
 use std::time::Duration;
@@ -20,12 +21,13 @@ use tokio::sync::{Mutex, RwLock};
 use tokio::task::{JoinError, JoinHandle};
 use tokio::time::sleep;
 
+use crate::channel::{get_data_channel_map_from_env, get_data_channel_value_from_env};
 use crate::util::parse_env_var;
 
-const KAFKA_ENC_TOPIC_ENV_KEY: &str = "KAFKA_ENCRYPTED_TOPIC";
-const KAFKA_OUT_TOPIC_ENV_KEY: &str = "KAFKA_OUTPUT_TOPIC";
-const DEFAULT_ENC_KAFKA_TOPIC: &str = "p3a-star-enc";
-const DEFAULT_OUT_KAFKA_TOPIC: &str = "p3a-star-out";
+const KAFKA_ENC_TOPICS_ENV_KEY: &str = "KAFKA_ENCRYPTED_TOPICS";
+const KAFKA_OUT_TOPICS_ENV_KEY: &str = "KAFKA_OUTPUT_TOPICS";
+const DEFAULT_ENC_KAFKA_TOPICS: &str = "typical=p3a-star-enc";
+const DEFAULT_OUT_KAFKA_TOPICS: &str = "typical=p3a-star-out";
 const KAFKA_BROKERS_ENV_KEY: &str = "KAFKA_BROKERS";
 const KAFKA_ENABLE_PLAINTEXT_ENV_KEY: &str = "KAFKA_ENABLE_PLAINTEXT";
 const KAFKA_PRODUCER_QUEUE_TASK_COUNT_ENV_KEY: &str = "KAFKA_PRODUCE_QUEUE_TASK_COUNT";
@@ -94,6 +96,13 @@ pub trait RecordStream {
 pub type DynRecordStream = dyn RecordStream + Send + Sync;
 pub type RecordStreamArc = Arc<DynRecordStream>;
 
+pub struct KafkaRecordStreamConfig {
+  pub enable_producer: bool,
+  pub enable_consumer: bool,
+  pub topic: String,
+  pub use_output_group_id: bool,
+}
+
 pub struct KafkaRecordStream {
   producer: Option<Arc<FutureProducer<KafkaContext>>>,
   consumer: Option<StreamConsumer<KafkaContext>>,
@@ -106,31 +115,46 @@ pub struct KafkaRecordStream {
   >,
 }
 
+pub fn get_data_channel_topic_map_from_env(use_output_topics: bool) -> HashMap<String, String> {
+  match use_output_topics {
+    true => get_data_channel_map_from_env(KAFKA_OUT_TOPICS_ENV_KEY, DEFAULT_OUT_KAFKA_TOPICS),
+    false => get_data_channel_map_from_env(KAFKA_ENC_TOPICS_ENV_KEY, DEFAULT_ENC_KAFKA_TOPICS),
+  }
+}
+
+pub fn get_data_channel_topic_from_env(use_output_topic: bool, channel_name: &str) -> String {
+  match use_output_topic {
+    true => get_data_channel_value_from_env(
+      KAFKA_OUT_TOPICS_ENV_KEY,
+      DEFAULT_OUT_KAFKA_TOPICS,
+      channel_name,
+    ),
+    false => get_data_channel_value_from_env(
+      KAFKA_ENC_TOPICS_ENV_KEY,
+      DEFAULT_ENC_KAFKA_TOPICS,
+      channel_name,
+    ),
+  }
+}
+
 impl KafkaRecordStream {
-  pub fn new(enable_producer: bool, enable_consumer: bool, use_output_topic: bool) -> Self {
-    let (topic, group_id) = if use_output_topic {
-      (
-        env::var(KAFKA_OUT_TOPIC_ENV_KEY).unwrap_or(DEFAULT_OUT_KAFKA_TOPIC.to_string()),
-        "star-agg-dec",
-      )
-    } else {
-      (
-        env::var(KAFKA_ENC_TOPIC_ENV_KEY).unwrap_or(DEFAULT_ENC_KAFKA_TOPIC.to_string()),
-        "star-agg-enc",
-      )
+  pub fn new(stream_config: KafkaRecordStreamConfig) -> Self {
+    let group_id = match stream_config.use_output_group_id {
+      true => "star-agg-dec",
+      false => "star-agg-enc",
     };
 
     let mut result = Self {
       producer: None,
       consumer: None,
-      topic: topic.clone(),
+      topic: stream_config.topic.clone(),
       producer_queues: RwLock::new(Vec::new()),
     };
-    if enable_producer {
+    if stream_config.enable_producer {
       let context = KafkaContext;
       let mut config = Self::new_client_config();
       let mut config_ref = &mut config;
-      if use_output_topic {
+      if stream_config.use_output_group_id {
         config_ref = config_ref.set("transactional.id", "main");
       }
       result.producer = Some(Arc::new(
@@ -142,9 +166,9 @@ impl KafkaRecordStream {
           .create_with_context(context)
           .unwrap(),
       ));
-      info!("Producing to topic: {}", topic);
+      info!("Producing to topic: {}", stream_config.topic);
     }
-    if enable_consumer {
+    if stream_config.enable_consumer {
       let context = KafkaContext;
       let mut config = Self::new_client_config();
       result.consumer = Some(
@@ -160,14 +184,14 @@ impl KafkaRecordStream {
       );
       info!(
         "Consuming from topic: {} (current offsets: {:?})",
-        topic,
+        stream_config.topic,
         result.consumer.as_ref().unwrap().position().unwrap()
       );
       result
         .consumer
         .as_ref()
         .unwrap()
-        .subscribe(&[&topic])
+        .subscribe(&[&stream_config.topic])
         .unwrap();
     }
     result

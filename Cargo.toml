@@ -26,7 +26,8 @@ rdkafka = { version = "0.33", features = ["ssl"] }
 diesel = { version = "2.1", features = ["postgres", "r2d2"] }
 diesel_migrations = "2.1"
 r2d2 = "0.8"
-chrono = "0.4"
+calendar-duration = "1.0"
+time = { version = "0.3", features = ["parsing", "serde"] }
 tokio-util = "0.7"
 reqwest = { version = "0.11", features = ["json"] }
 rusoto_core = "0.48"

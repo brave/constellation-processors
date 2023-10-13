@@ -122,7 +122,7 @@ impl RecoveredMessages {
 #[cfg(test)]
 mod tests {
   use super::*;
-  use crate::models::DBPool;
+  use crate::models::{DBConnectionType, DBPool};
   use dotenvy::dotenv;
 
   #[tokio::test]
@@ -186,7 +186,7 @@ mod tests {
     assert!(recovered_msgs.get_mut(4, &vec![53; 20]).is_none());
     assert!(recovered_msgs.get_mut(3, &vec![55; 20]).is_none());
 
-    let db_pool = Arc::new(DBPool::new(true));
+    let db_pool = Arc::new(DBPool::new(DBConnectionType::Test));
     let store_conns = Arc::new(DBStorageConnections::new(&db_pool, true).await.unwrap());
 
     recovered_msgs
@@ -255,7 +255,7 @@ mod tests {
       },
     ];
 
-    let db_pool = Arc::new(DBPool::new(true));
+    let db_pool = Arc::new(DBPool::new(DBConnectionType::Test));
     let conn = Arc::new(Mutex::new(db_pool.get().await.unwrap()));
 
     new_rec_msgs

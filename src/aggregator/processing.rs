@@ -2,7 +2,7 @@ use super::group::GroupedMessages;
 use super::recovered::RecoveredMessages;
 use super::report::report_measurements;
 use super::AggregatorError;
-use crate::epoch::{is_epoch_expired, EpochConfig};
+use crate::epoch::EpochConfig;
 use crate::models::{DBConnection, DBPool, DBStorageConnections, PendingMessage, RecoveredMessage};
 use crate::profiler::{Profiler, ProfilerStat};
 use crate::record_stream::{DynRecordStream, RecordStreamArc};
@@ -20,7 +20,7 @@ pub async fn process_expired_epochs(
 ) -> Result<(), AggregatorError> {
   let epochs = RecoveredMessage::list_distinct_epochs(conn.clone()).await?;
   for epoch in epochs {
-    if !is_epoch_expired(epoch_config, epoch as u8) {
+    if !epoch_config.is_epoch_expired(epoch as u8) {
       continue;
     }
     info!("Detected expired epoch '{}', processing...", epoch);
