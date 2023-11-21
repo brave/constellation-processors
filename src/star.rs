@@ -108,13 +108,22 @@ pub fn recover_msgs(
     None
   };
 
-  Ok(MsgRecoveryInfo {
-    measurement: get_measurement_contents(
-      pms.iter().find(|v| v.is_ok()).unwrap().as_ref().unwrap(),
-    )?,
-    next_layer_messages,
-    error_count,
-  })
+  match pms.iter().find(|v| v.is_ok()) {
+    None => {
+      let first_error = pms.iter().next().unwrap().clone().unwrap_err();
+      for result in pms {
+        if let Err(e) = result {
+          debug!("recovery failure: {}", e);
+        }
+      }
+      Err(AppSTARError::Recovery(first_error))
+    }
+    Some(measurement) => Ok(MsgRecoveryInfo {
+      measurement: get_measurement_contents(measurement.as_ref().unwrap())?,
+      next_layer_messages,
+      error_count,
+    }),
+  }
 }
 
 #[cfg(test)]
