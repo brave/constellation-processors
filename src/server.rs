@@ -1,3 +1,4 @@
+use crate::channel::get_data_channel_map_from_env;
 use crate::prometheus::{
   create_metric_server, InflightMetricLabels, TotalMetricLabels, WebMetrics,
 };
@@ -5,6 +6,7 @@ use crate::record_stream::{
   get_data_channel_topic_map_from_env, KafkaRecordStream, KafkaRecordStreamConfig, RecordStream,
 };
 use crate::star::{parse_message, AppSTARError};
+use actix_web::HttpRequest;
 use actix_web::{
   dev::Service,
   error::ResponseError,
@@ -18,10 +20,14 @@ use base64::{engine::general_purpose as base64_engine, Engine as _};
 use derive_more::{Display, Error, From};
 use futures::{future::try_join, FutureExt};
 use prometheus_client::registry::Registry;
+use reqwest::header::HeaderName;
 use std::collections::HashMap;
 use std::str::{from_utf8, Utf8Error};
 use std::sync::Arc;
 use std::time::Instant;
+
+const MIN_CHANNEL_REVISIONS_ENV_KEY: &str = "MIN_CHANNEL_REVISIONS";
+const REVISION_HEADER: &str = "brave-p3a-version";
 
 #[derive(From, Error, Display, Debug)]
 pub enum WebError {
@@ -39,6 +45,7 @@ pub struct ServerState {
   pub channel_rec_streams: HashMap<String, KafkaRecordStream>,
   pub web_metrics: Arc<WebMetrics>,
   pub main_channel: String,
+  pub min_revision_map: HashMap<String, usize>,
 }
 
 impl ResponseError for WebError {
@@ -67,6 +74,7 @@ async fn ident_handler() -> Result<impl Responder, WebError> {
 
 async fn handle_measurement_submit(
   body: web::Bytes,
+  request: HttpRequest,
   state: &ServerState,
   channel_name: &String,
 ) -> Result<impl Responder, WebError> {
@@ -76,6 +84,24 @@ async fn handle_measurement_submit(
       let body_str = from_utf8(&body)?.trim();
       let bincode_msg = base64_engine::STANDARD.decode(body_str)?;
       parse_message(&bincode_msg)?;
+
+      if let Some(min_revision) = state.min_revision_map.get(channel_name) {
+        let req_revision = request
+          .headers()
+          .get(HeaderName::from_static(REVISION_HEADER))
+          .map(|v| {
+            v.to_str()
+              .unwrap_or_default()
+              .parse::<usize>()
+              .unwrap_or_default()
+          })
+          .unwrap_or_default();
+        if req_revision < *min_revision {
+          // Just ignore older requests gracefully
+          return Ok(HttpResponse::NoContent().finish());
+        }
+      }
+
       match rec_stream.produce(&bincode_msg).await {
         Err(e) => {
           error!("Failed to push message: {}", e);
@@ -90,18 +116,20 @@ async fn handle_measurement_submit(
 #[post("/{channel}")]
 async fn channel_handler(
   body: web::Bytes,
+  request: HttpRequest,
   state: Data<ServerState>,
   channel: web::Path<String>,
 ) -> Result<impl Responder, WebError> {
-  handle_measurement_submit(body, state.as_ref(), channel.as_ref()).await
+  handle_measurement_submit(body, request, state.as_ref(), channel.as_ref()).await
 }
 
 #[post("/")]
 async fn main_handler(
   body: web::Bytes,
+  request: HttpRequest,
   state: Data<ServerState>,
 ) -> Result<impl Responder, WebError> {
-  handle_measurement_submit(body, state.as_ref(), &state.main_channel).await
+  handle_measurement_submit(body, request, state.as_ref(), &state.main_channel).await
 }
 
 pub async fn start_server(worker_count: usize, main_channel: String) -> std::io::Result<()> {
@@ -120,10 +148,23 @@ pub async fn start_server(worker_count: usize, main_channel: String) -> std::io:
     })
     .collect();
 
+  let min_revision_map = get_data_channel_map_from_env(MIN_CHANNEL_REVISIONS_ENV_KEY, "")
+    .into_iter()
+    .map(|(channel, value)| {
+      (
+        channel,
+        value
+          .parse::<usize>()
+          .expect("minimum channel revision should be non-negative integer"),
+      )
+    })
+    .collect();
+
   let state = Data::new(ServerState {
     channel_rec_streams,
     web_metrics: Arc::new(WebMetrics::new()),
     main_channel,
+    min_revision_map,
   });
 
   let mut registry = <Registry>::default();
