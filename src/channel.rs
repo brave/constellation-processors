@@ -8,7 +8,7 @@ pub fn get_data_channel_map_from_env(env_key: &str, default: &str) -> HashMap<St
   let env_encoded = env::var(env_key).unwrap_or_else(|_| default.to_string());
 
   let mut map = HashMap::new();
-  for encoded_channel in env_encoded.split(",") {
+  for encoded_channel in env_encoded.split(",").filter(|v| !v.is_empty()) {
     let mut encoded_channel_split = encoded_channel.split("=");
     let channel_name = encoded_channel_split
       .next()

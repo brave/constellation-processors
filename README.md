@@ -76,6 +76,7 @@ The format for an individual data channel setting is `<data channel name>=<value
 | EPOCH_LIFETIMES | `typical=3` | No | The amount of current & recent previous epochs considered to be 'active'. Epochs older than this lifetime will be consider 'expired', and all partial measurements will be reported at the end of aggregation, if any.  |
 | EPOCH_DATE_FIELD_NAMES | `typical=wos` | No | The name of the date fields to inject into the aggregated measurements. The injected field will include the survey date, inferred via the measurement epoch. |
 | RANDOMNESS_INSTANCE_NAMES | `typical=typical` | No | Randomness server instance names, for retrieving relevant server info. |
+| MIN_CHANNEL_REVISIONS | | No | The minimum `Brave-P3A-Version` header value for measurements submitted to the server. |
 
 The main channel name can be selected by using the `--main-channel-name` switch. Using this switch will have the following effects:
 
