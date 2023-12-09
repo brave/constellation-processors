@@ -592,7 +592,7 @@ dependencies = [
  "sentry",
  "serde",
  "serde_json",
- "sta-rs",
+ "sta-rs 0.3.0",
  "star-constellation",
  "time",
  "tokio",
@@ -2442,6 +2442,20 @@ dependencies = [
 ]
 
 [[package]]
+name = "sta-rs"
+version = "0.3.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "7690c478e6f02fa258da818b1274b7ddf91abe772001b807d7c5113e1ce48e27"
+dependencies = [
+ "adss",
+ "ppoprf",
+ "rand",
+ "rand_core",
+ "strobe-rs",
+ "zeroize",
+]
+
+[[package]]
 name = "star-constellation"
 version = "0.2.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2453,7 +2467,7 @@ dependencies = [
  "rand",
  "serde",
  "serde_json",
- "sta-rs",
+ "sta-rs 0.2.2",
 ]
 
 [[package]]

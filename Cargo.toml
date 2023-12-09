@@ -5,7 +5,7 @@ edition = "2021"
 
 [dependencies]
 star-constellation = "0.2.2"
-sta-rs = "0.2.2"
+sta-rs = "0.3.0"
 actix-web = "4"
 env_logger = "0.10"
 log = "0.4"
