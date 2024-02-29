@@ -5,7 +5,7 @@ networks:
 
 services:
   localstack:
-    image: localstack/localstack
+    image: localstack/localstack@sha256:aa323588b75dfb4073ad3dd2b24671b2299de3ea293c9e22256f63db9ab2ac69
     ports:
       - 4510-4559:4510-4559
       - 4566:4566
@@ -20,7 +20,7 @@ services:
     networks:
       - star-agg
   db:
-    image: postgres
+    image: postgres@sha256:f58300ac8d393b2e3b09d36ea12d7d24ee9440440e421472a300e929ddb63460
     command: postgres -c 'max_connections=300'
     ports:
       - 5642:5432
@@ -33,13 +33,13 @@ services:
       - "./misc/create_additional_dbs.sql:/docker-entrypoint-initdb.d/create_additional_dbs.sql"
 
   zookeeper:
-    image: bitnami/zookeeper
+    image: bitnami/zookeeper@sha256:a1f45921c809f3f39050a79a5a97fbd625ae0ad6f93633b6172db69386b9176e
     environment:
       - ALLOW_ANONYMOUS_LOGIN=yes
     networks:
       - star-agg
   kafka:
-    image: bitnami/kafka
+    image: bitnami/kafka@sha256:5f0ed16902daa9797f5cc22d872e6e40aac729df031ee1db32ddbb74133faa4c
     ports:
       - 9092:9092
     environment:
