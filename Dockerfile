@@ -1,4 +1,4 @@
-FROM rust:1
+FROM rust:1@sha256:a71cd88f9dd32fbdfa67c935f55165ddd89b7166e95de6c053c9bf33dd7381d5
 
 EXPOSE 8080 9090
 
