@@ -6,6 +6,7 @@ use crate::record_stream::{
   get_data_channel_topic_map_from_env, KafkaRecordStream, KafkaRecordStreamConfig, RecordStream,
 };
 use crate::star::{parse_message, AppSTARError};
+use crate::util::parse_env_var;
 use actix_web::HttpRequest;
 use actix_web::{
   dev::Service,
@@ -22,12 +23,18 @@ use futures::{future::try_join, FutureExt};
 use prometheus_client::registry::Registry;
 use reqwest::header::HeaderName;
 use std::collections::HashMap;
-use std::str::{from_utf8, Utf8Error};
+use std::ops::RangeInclusive;
+use std::str::{from_utf8, FromStr, Utf8Error};
 use std::sync::Arc;
 use std::time::Instant;
 
 const MIN_CHANNEL_REVISIONS_ENV_KEY: &str = "MIN_CHANNEL_REVISIONS";
+const MIN_REQUEST_K_THRESHOLD_ENV_KEY: &str = "MIN_REQUEST_K_THRESHOLD";
+const MIN_REQUEST_K_THRESHOLD_DEFAULT: &str = "20";
+const MAX_REQUEST_K_THRESHOLD_ENV_KEY: &str = "MAX_REQUEST_K_THRESHOLD";
+const MAX_REQUEST_K_THRESHOLD_DEFAULT: &str = "50";
 const REVISION_HEADER: &str = "brave-p3a-version";
+const THRESHOLD_HEADER: &str = "brave-p3a-constellation-threshold";
 
 #[derive(From, Error, Display, Debug)]
 pub enum WebError {
@@ -37,6 +44,8 @@ pub enum WebError {
   Utf8(Utf8Error),
   #[display(fmt = "Failed to decode STAR message: {}", _0)]
   STARDecode(AppSTARError),
+  #[display(fmt = "Bad k threshold in request header")]
+  BadThreshold,
   #[display(fmt = "Internal server error")]
   Internal,
 }
@@ -46,6 +55,7 @@ pub struct ServerState {
   pub web_metrics: Arc<WebMetrics>,
   pub main_channel: String,
   pub min_revision_map: HashMap<String, usize>,
+  pub request_threshold_range: RangeInclusive<usize>,
 }
 
 impl ResponseError for WebError {
@@ -57,7 +67,10 @@ impl ResponseError for WebError {
 
   fn status_code(&self) -> StatusCode {
     match *self {
-      WebError::STARDecode(_) | WebError::Utf8(_) | WebError::Base64(_) => StatusCode::BAD_REQUEST,
+      WebError::STARDecode(_)
+      | WebError::Utf8(_)
+      | WebError::Base64(_)
+      | WebError::BadThreshold => StatusCode::BAD_REQUEST,
       WebError::Internal => StatusCode::INTERNAL_SERVER_ERROR,
     }
   }
@@ -70,6 +83,13 @@ async fn ident_handler() -> Result<impl Responder, WebError> {
     "STAR Constellation aggregation endpoint.\n",
     "See https://github.com/brave/constellation-processors for more information.\n"
   ))
+}
+
+fn extract_and_parse_header<T: FromStr>(request: &HttpRequest, header_name: &str) -> Option<T> {
+  request
+    .headers()
+    .get(HeaderName::from_static(header_name))
+    .and_then(|v| v.to_str().unwrap_or_default().parse::<T>().ok())
 }
 
 async fn handle_measurement_submit(
@@ -86,23 +106,21 @@ async fn handle_measurement_submit(
       parse_message(&bincode_msg)?;
 
       if let Some(min_revision) = state.min_revision_map.get(channel_name) {
-        let req_revision = request
-          .headers()
-          .get(HeaderName::from_static(REVISION_HEADER))
-          .map(|v| {
-            v.to_str()
-              .unwrap_or_default()
-              .parse::<usize>()
-              .unwrap_or_default()
-          })
-          .unwrap_or_default();
+        let req_revision: usize =
+          extract_and_parse_header(&request, REVISION_HEADER).unwrap_or_default();
         if req_revision < *min_revision {
           // Just ignore older requests gracefully
           return Ok(HttpResponse::NoContent().finish());
         }
       }
+      let threshold: Option<usize> = extract_and_parse_header(&request, THRESHOLD_HEADER);
+      if let Some(threshold) = threshold {
+        if !state.request_threshold_range.contains(&threshold) {
+          return Err(WebError::BadThreshold);
+        }
+      }
 
-      match rec_stream.produce(&bincode_msg).await {
+      match rec_stream.produce(&bincode_msg, threshold).await {
         Err(e) => {
           error!("Failed to push message: {}", e);
           Err(WebError::Internal)
@@ -160,11 +178,21 @@ pub async fn start_server(worker_count: usize, main_channel: String) -> std::io:
     })
     .collect();
 
+  let min_request_threshold = parse_env_var(
+    MIN_REQUEST_K_THRESHOLD_ENV_KEY,
+    MIN_REQUEST_K_THRESHOLD_DEFAULT,
+  );
+  let max_request_threshold = parse_env_var(
+    MAX_REQUEST_K_THRESHOLD_ENV_KEY,
+    MAX_REQUEST_K_THRESHOLD_DEFAULT,
+  );
+
   let state = Data::new(ServerState {
     channel_rec_streams,
     web_metrics: Arc::new(WebMetrics::new()),
     main_channel,
     min_revision_map,
+    request_threshold_range: min_request_threshold..=max_request_threshold,
   });
 
   let mut registry = <Registry>::default();

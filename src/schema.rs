@@ -6,6 +6,7 @@ diesel::table! {
         msg_tag -> Bytea,
         epoch_tag -> Int2,
         message -> Bytea,
+        threshold -> Nullable<Int2>,
     }
 }
 
@@ -25,4 +26,7 @@ diesel::table! {
     }
 }
 
-diesel::allow_tables_to_appear_in_same_query!(pending_msgs, recovered_msgs,);
+diesel::allow_tables_to_appear_in_same_query!(
+    pending_msgs,
+    recovered_msgs,
+);
