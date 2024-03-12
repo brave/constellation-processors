@@ -20,6 +20,7 @@ use consume::consume_and_group;
 use derive_more::{Display, Error, From};
 use futures::future::try_join_all;
 use processing::{process_expired_epochs, start_subtask};
+use star_constellation::api::NestedMessage;
 use star_constellation::Error as ConstellationError;
 use std::str::Utf8Error;
 use std::sync::{Arc, Mutex};
@@ -43,6 +44,11 @@ pub enum AggregatorError {
   RecordStream(RecordStreamError),
   Join(JoinError),
   JSONSerialize(serde_json::Error),
+}
+
+pub struct ConsumedMessage {
+  msg: NestedMessage,
+  request_threshold: usize,
 }
 
 fn create_output_stream(

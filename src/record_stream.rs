@@ -8,7 +8,7 @@ use rdkafka::consumer::{
   stream_consumer::StreamConsumer, CommitMode, Consumer, ConsumerContext, Rebalance,
 };
 use rdkafka::error::{KafkaError, KafkaResult};
-use rdkafka::message::Message;
+use rdkafka::message::{Header, Headers, Message, OwnedHeaders};
 use rdkafka::producer::{future_producer::FutureProducer, FutureRecord, Producer};
 use rdkafka::types::RDKafkaErrorCode;
 use rdkafka::TopicPartitionList;
@@ -41,6 +41,8 @@ const KAFKA_COMMIT_TRX_TIMEOUT_SECS: u64 = 60 * 30;
 
 const KAFKA_PRODUCE_TIMEOUT_SECS: u64 = 12;
 
+const THRESHOLD_HEADER_NAME: &str = "threshold";
+
 #[derive(Debug, Display, Error, From)]
 #[display(fmt = "Record stream error: {}")]
 pub enum RecordStreamError {
@@ -70,6 +72,12 @@ impl ConsumerContext for KafkaContext {
   }
 }
 
+pub struct ConsumedRecord {
+  pub data: Vec<u8>,
+  // Only applicable for the encrypted stream
+  pub request_threshold: Option<usize>,
+}
+
 #[async_trait]
 pub trait RecordStream {
   fn init_producer_transactions(&self) -> Result<(), RecordStreamError>;
@@ -80,7 +88,11 @@ pub trait RecordStream {
 
   fn has_assigned_partitions(&self) -> Result<bool, RecordStreamError>;
 
-  async fn produce(&self, record: &[u8]) -> Result<(), RecordStreamError>;
+  async fn produce(
+    &self,
+    record: &[u8],
+    request_threshold: Option<usize>,
+  ) -> Result<(), RecordStreamError>;
 
   async fn init_producer_queues(&self);
 
@@ -88,7 +100,7 @@ pub trait RecordStream {
 
   async fn join_produce_queues(&self) -> Result<(), RecordStreamError>;
 
-  async fn consume(&self) -> Result<Vec<u8>, RecordStreamError>;
+  async fn consume(&self) -> Result<ConsumedRecord, RecordStreamError>;
 
   async fn commit_last_consume(&self) -> Result<(), RecordStreamError>;
 }
@@ -262,9 +274,20 @@ impl RecordStream for KafkaRecordStream {
     Ok(false)
   }
 
-  async fn produce(&self, record: &[u8]) -> Result<(), RecordStreamError> {
+  async fn produce(
+    &self,
+    record: &[u8],
+    request_threshold: Option<usize>,
+  ) -> Result<(), RecordStreamError> {
     let producer = self.producer.as_ref().expect("Kafka producer not enabled");
-    let record: FutureRecord<str, [u8]> = FutureRecord::to(&self.topic).payload(record);
+    let mut record: FutureRecord<str, [u8]> = FutureRecord::to(&self.topic).payload(record);
+    if request_threshold.is_some() {
+      let headers = OwnedHeaders::new_with_capacity(1).insert(Header {
+        key: THRESHOLD_HEADER_NAME,
+        value: request_threshold.map(|v| &(v as u32).to_le_bytes()),
+      });
+      record = record.headers(headers);
+    }
     let send_result = producer
       .send(record, Duration::from_secs(KAFKA_PRODUCE_TIMEOUT_SECS))
       .await;
@@ -316,7 +339,7 @@ impl RecordStream for KafkaRecordStream {
     Ok(())
   }
 
-  async fn consume(&self) -> Result<Vec<u8>, RecordStreamError> {
+  async fn consume(&self) -> Result<ConsumedRecord, RecordStreamError> {
     let consumer = self.consumer.as_ref().expect("Kafka consumer not enabled");
     let msg = consumer.recv().await?;
     let empty = Vec::new();
@@ -324,12 +347,26 @@ impl RecordStream for KafkaRecordStream {
       None => Ok(empty.as_slice()),
       Some(s) => s.map_err(|_| RecordStreamError::Deserialize),
     }?;
+    let mut request_threshold = None;
+    if let Some(headers) = msg.headers() {
+      let mut it = headers.iter();
+      while let Some(header) = it.next() {
+        if header.key == THRESHOLD_HEADER_NAME {
+          let value = header.value.unwrap_or_default();
+          request_threshold =
+            Some(u32::from_le_bytes(value.try_into().unwrap_or_default()) as usize);
+        }
+      }
+    }
     trace!(
       "recv partition = {} offset = {}",
       msg.partition(),
       msg.offset()
     );
-    Ok(payload.to_vec())
+    Ok(ConsumedRecord {
+      data: payload.to_vec(),
+      request_threshold,
+    })
   }
 
   async fn commit_last_consume(&self) -> Result<(), RecordStreamError> {
@@ -373,7 +410,11 @@ impl RecordStream for TestRecordStream {
     Ok(true)
   }
 
-  async fn produce(&self, record: &[u8]) -> Result<(), RecordStreamError> {
+  async fn produce(
+    &self,
+    record: &[u8],
+    request_threshold: Option<usize>,
+  ) -> Result<(), RecordStreamError> {
     self.records_produced.lock().await.push(record.to_vec());
     Ok(())
   }
@@ -381,21 +422,24 @@ impl RecordStream for TestRecordStream {
   async fn init_producer_queues(&self) {}
 
   async fn queue_produce(&self, record: Vec<u8>) -> Result<(), RecordStreamError> {
-    self.produce(&record).await
+    self.produce(&record, None).await
   }
 
   async fn join_produce_queues(&self) -> Result<(), RecordStreamError> {
     Ok(())
   }
 
-  async fn consume(&self) -> Result<Vec<u8>, RecordStreamError> {
+  async fn consume(&self) -> Result<ConsumedRecord, RecordStreamError> {
     let mut records_to_consume = self.records_to_consume.lock().await;
     if records_to_consume.is_empty() {
       drop(records_to_consume);
       sleep(Duration::from_secs(90)).await;
       return Err(RecordStreamError::TestConsumeTimeout);
     }
-    Ok(records_to_consume.remove(0))
+    Ok(ConsumedRecord {
+      data: records_to_consume.remove(0),
+      request_threshold: None,
+    })
   }
 
   async fn commit_last_consume(&self) -> Result<(), RecordStreamError> {

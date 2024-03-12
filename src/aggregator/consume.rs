@@ -1,6 +1,6 @@
 use super::group::GroupedMessages;
 use super::AggregatorError;
-use crate::record_stream::RecordStreamArc;
+use crate::record_stream::{ConsumedRecord, RecordStreamArc};
 use crate::star::parse_message;
 use crate::util::parse_env_var;
 use futures::future::try_join_all;
@@ -22,7 +22,7 @@ const RATE_CHECK_INTERVAL_SECS: u64 = 5;
 
 async fn run_recv_task(
   rec_stream: RecordStreamArc,
-  parsing_task_tx: mpsc::UnboundedSender<Vec<u8>>,
+  parsing_task_tx: mpsc::UnboundedSender<ConsumedRecord>,
   msg_count: Arc<Mutex<usize>>,
   msgs_to_collect_count: usize,
 ) -> Result<(), AggregatorError> {
@@ -87,7 +87,7 @@ async fn run_recv_task(
 fn create_recv_tasks(
   rec_streams: &Vec<RecordStreamArc>,
   parsing_tasks: &Vec<(
-    mpsc::UnboundedSender<Vec<u8>>,
+    mpsc::UnboundedSender<ConsumedRecord>,
     JoinHandle<Result<(), AggregatorError>>,
   )>,
   msg_count: Arc<Mutex<usize>>,
@@ -116,16 +116,16 @@ fn create_parsing_tasks(
   task_count: usize,
   parsed_tx: UnboundedSender<NestedMessage>,
 ) -> Vec<(
-  mpsc::UnboundedSender<Vec<u8>>,
+  mpsc::UnboundedSender<ConsumedRecord>,
   JoinHandle<Result<(), AggregatorError>>,
 )> {
   (0..task_count)
     .map(|_| {
       let parsed_tx = parsed_tx.clone();
-      let (raw_tx, mut raw_rx) = mpsc::unbounded_channel::<Vec<u8>>();
+      let (raw_tx, mut raw_rx) = mpsc::unbounded_channel::<ConsumedRecord>();
       let task = tokio::spawn(async move {
         while let Some(msg) = raw_rx.recv().await {
-          parsed_tx.send(parse_message(&msg)?).unwrap();
+          parsed_tx.send(parse_message(&msg.data)?).unwrap();
         }
         info!("Parsing task finished");
         Ok(())
