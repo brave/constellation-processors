@@ -33,7 +33,7 @@ services:
       - "./misc/create_additional_dbs.sql:/docker-entrypoint-initdb.d/create_additional_dbs.sql"
 
   zookeeper:
-    image: bitnami/zookeeper@sha256:a1f45921c809f3f39050a79a5a97fbd625ae0ad6f93633b6172db69386b9176e
+    image: bitnami/zookeeper@sha256:24c0cf6372add746789caf4baee97d6e1605be3be522cd1ddb04206fc9a1c901
     environment:
       - ALLOW_ANONYMOUS_LOGIN=yes
     networks:
