@@ -83,7 +83,7 @@ async fn gen_random_msgs(cli_args: &CliArgs) -> Vec<String> {
 
         let measurement_layers: Vec<_> = (0..cli_args.layer_count)
           .map(|i| {
-            let r: u32 = rng.gen();
+            let r: u32 = 0;
             format!("layer{}|{}", i, r).as_bytes().to_vec()
           })
           .collect();

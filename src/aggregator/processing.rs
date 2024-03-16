@@ -1,12 +1,12 @@
 use super::group::GroupedMessages;
 use super::recovered::RecoveredMessages;
 use super::report::report_measurements;
-use super::AggregatorError;
+use super::{AggregatorError, MessageWithThreshold};
 use crate::epoch::EpochConfig;
 use crate::models::{DBConnection, DBPool, DBStorageConnections, PendingMessage, RecoveredMessage};
 use crate::profiler::{Profiler, ProfilerStat};
 use crate::record_stream::{DynRecordStream, RecordStreamArc};
-use crate::star::{parse_message, recover_key, recover_msgs, AppSTARError, MsgRecoveryInfo};
+use crate::star::{recover_key, recover_msgs, AppSTARError, MsgRecoveryInfo};
 use star_constellation::Error as ConstellationError;
 use std::sync::{Arc, Mutex};
 use std::time::Instant;
@@ -47,7 +47,6 @@ pub async fn process_expired_epochs(
 fn process_one_layer(
   grouped_msgs: &mut GroupedMessages,
   rec_msgs: &mut RecoveredMessages,
-  k_threshold: usize,
 ) -> Result<(GroupedMessages, Vec<(u8, Vec<u8>)>, usize, bool), AggregatorError> {
   let mut next_grouped_msgs = GroupedMessages::default();
   let mut pending_tags_to_remove = Vec::new();
@@ -57,20 +56,25 @@ fn process_one_layer(
   for (epoch, epoch_map) in &mut grouped_msgs.msg_chunks {
     for (msg_tag, chunk) in epoch_map {
       let existing_rec_msg = rec_msgs.get_mut(*epoch, msg_tag);
+
+      let threshold = chunk
+        .most_common_threshold()
+        .expect("should be able to find common threshold among messages");
+
       // if we don't have a key for this tag, check to see if it meets the k threshold
       // if not, skip it
-      if existing_rec_msg.is_none() && chunk.new_msgs.len() + chunk.pending_msgs.len() < k_threshold
-      {
+      if existing_rec_msg.is_none() && chunk.new_msgs.len() + chunk.pending_msgs.len() < threshold {
         continue;
       }
       let new_msg_count = chunk.new_msgs.len();
       let has_pending_msgs = !chunk.pending_msgs.is_empty();
 
       // concat new messages from kafka, and pending messages from PG into one vec
-      let mut msgs = Vec::new();
-      msgs.append(&mut chunk.new_msgs);
+      // "mwt" = message with threshold
+      let mut mwts = Vec::new();
+      mwts.append(&mut chunk.new_msgs);
       for pending_msg in chunk.pending_msgs.drain(..) {
-        msgs.push(parse_message(&pending_msg.message)?);
+        mwts.push(pending_msg.try_into()?);
       }
 
       // if a recovered msg exists, use the key that was already recovered.
@@ -78,12 +82,17 @@ fn process_one_layer(
       let key = if let Some(rec_msg) = existing_rec_msg.as_ref() {
         rec_msg.key.clone()
       } else {
-        match recover_key(&msgs, *epoch, k_threshold) {
+        match recover_key(
+          mwts.iter().map(|mwt| &mwt.msg),
+          mwts.len(),
+          *epoch,
+          threshold,
+        ) {
           Err(e) => {
             match e {
               AppSTARError::Recovery(ConstellationError::ShareRecovery) => {
                 // Store new messages until we receive more shares in the future.
-                for msg in msgs.drain(..new_msg_count) {
+                for msg in mwts.drain(..new_msg_count) {
                   chunk.new_msgs.push(msg);
                 }
                 continue;
@@ -95,18 +104,18 @@ fn process_one_layer(
         }
       };
 
-      let msgs_len = msgs.len() as i64;
+      let mwts_len = mwts.len() as i64;
 
       let MsgRecoveryInfo {
         measurement,
         next_layer_messages,
         error_count,
-      } = recover_msgs(msgs, &key)?;
+      } = recover_msgs(mwts.into_iter().map(|mwt| mwt.msg).collect(), &key)?;
       total_error_count += error_count;
 
       // create or update recovered msg with new count
       if let Some(rec_msg) = existing_rec_msg {
-        rec_msg.count += msgs_len;
+        rec_msg.count += mwts_len;
       } else {
         rec_msgs.add(RecoveredMessage {
           id: 0,
@@ -115,7 +124,7 @@ fn process_one_layer(
           metric_name: measurement.0,
           metric_value: measurement.1,
           parent_recovered_msg_tag: chunk.parent_msg_tag.clone(),
-          count: msgs_len,
+          count: mwts_len,
           key: key.to_vec(),
           has_children: next_layer_messages.is_some(),
         });
@@ -124,7 +133,7 @@ fn process_one_layer(
       // save messages in the next layer in a new GroupedMessages struct
       if let Some(child_msgs) = next_layer_messages {
         for msg in child_msgs {
-          next_grouped_msgs.add(msg, Some(msg_tag));
+          next_grouped_msgs.add(MessageWithThreshold { msg, threshold }, Some(msg_tag));
         }
       }
 
@@ -149,7 +158,6 @@ pub fn start_subtask(
   db_pool: Arc<DBPool>,
   out_stream: Option<RecordStreamArc>,
   mut grouped_msgs: GroupedMessages,
-  k_threshold: usize,
   epoch_config: Arc<EpochConfig>,
   profiler: Arc<Profiler>,
 ) -> JoinHandle<(i64, usize)> {
@@ -191,7 +199,7 @@ pub fn start_subtask(
         id, tag_count
       );
       let (new_grouped_msgs, pending_tags_to_remove_chunk, layer_error_count, has_processed) =
-        process_one_layer(&mut grouped_msgs, &mut rec_msgs, k_threshold).unwrap();
+        process_one_layer(&mut grouped_msgs, &mut rec_msgs).unwrap();
       error_count += layer_error_count;
 
       pending_tags_to_remove.extend(pending_tags_to_remove_chunk);

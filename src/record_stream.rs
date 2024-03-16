@@ -281,10 +281,11 @@ impl RecordStream for KafkaRecordStream {
   ) -> Result<(), RecordStreamError> {
     let producer = self.producer.as_ref().expect("Kafka producer not enabled");
     let mut record: FutureRecord<str, [u8]> = FutureRecord::to(&self.topic).payload(record);
-    if request_threshold.is_some() {
+    if let Some(threshold) = request_threshold {
+      let threshold = (threshold as u32).to_le_bytes();
       let headers = OwnedHeaders::new_with_capacity(1).insert(Header {
         key: THRESHOLD_HEADER_NAME,
-        value: request_threshold.map(|v| &(v as u32).to_le_bytes()),
+        value: Some(&threshold),
       });
       record = record.headers(headers);
     }
@@ -413,7 +414,7 @@ impl RecordStream for TestRecordStream {
   async fn produce(
     &self,
     record: &[u8],
-    request_threshold: Option<usize>,
+    _request_threshold: Option<usize>,
   ) -> Result<(), RecordStreamError> {
     self.records_produced.lock().await.push(record.to_vec());
     Ok(())

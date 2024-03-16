@@ -15,6 +15,7 @@ pub struct PendingMessage {
   pub msg_tag: Vec<u8>,
   pub epoch_tag: i16,
   pub message: Vec<u8>,
+  pub threshold: i16,
 }
 
 #[derive(Insertable, Clone)]
@@ -23,6 +24,7 @@ pub struct NewPendingMessage {
   pub msg_tag: Vec<u8>,
   pub epoch_tag: i16,
   pub message: Vec<u8>,
+  pub threshold: i16,
 }
 
 impl PendingMessage {

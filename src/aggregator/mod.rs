@@ -7,14 +7,14 @@ mod report;
 use crate::epoch::EpochConfig;
 use crate::models::{
   begin_db_transaction, commit_db_transaction, DBConnectionType, DBPool, DBStorageConnections,
-  PgStoreError,
+  PendingMessage, PgStoreError,
 };
 use crate::profiler::{Profiler, ProfilerStat};
 use crate::record_stream::{
   get_data_channel_topic_from_env, KafkaRecordStream, KafkaRecordStreamConfig, RecordStream,
   RecordStreamArc, RecordStreamError,
 };
-use crate::star::AppSTARError;
+use crate::star::{parse_message, AppSTARError};
 use crate::util::parse_env_var;
 use consume::consume_and_group;
 use derive_more::{Display, Error, From};
@@ -27,8 +27,8 @@ use std::sync::{Arc, Mutex};
 use std::time::Instant;
 use tokio::task::JoinError;
 
-pub const K_THRESHOLD_ENV_KEY: &str = "K_THRESHOLD";
-pub const K_THRESHOLD_DEFAULT: &str = "50";
+pub const DEFAULT_K_THRESHOLD_ENV_KEY: &str = "K_THRESHOLD";
+pub const DEFAULT_K_THRESHOLD_DEFAULT: &str = "50";
 pub const MIN_MSGS_TO_PROCESS_ENV_KEY: &str = "MIN_MSGS_TO_PROCESS";
 pub const MIN_MSGS_TO_PROCESS_DEFAULT: &str = "1000";
 
@@ -44,11 +44,24 @@ pub enum AggregatorError {
   RecordStream(RecordStreamError),
   Join(JoinError),
   JSONSerialize(serde_json::Error),
+  ThresholdTooBig,
 }
 
-pub struct ConsumedMessage {
+#[derive(Clone)]
+pub struct MessageWithThreshold {
   msg: NestedMessage,
-  request_threshold: usize,
+  threshold: usize,
+}
+
+impl TryFrom<PendingMessage> for MessageWithThreshold {
+  type Error = AppSTARError;
+
+  fn try_from(msg: PendingMessage) -> Result<Self, Self::Error> {
+    Ok(Self {
+      msg: parse_message(&msg.message)?,
+      threshold: msg.threshold.max(0) as usize,
+    })
+  }
 }
 
 fn create_output_stream(
@@ -88,7 +101,8 @@ pub async fn start_aggregation(
 ) -> Result<(), AggregatorError> {
   info!("Current epoch is {}", epoch_config.current_epoch.epoch);
 
-  let k_threshold = parse_env_var::<usize>(K_THRESHOLD_ENV_KEY, K_THRESHOLD_DEFAULT);
+  let default_k_threshold =
+    parse_env_var::<usize>(DEFAULT_K_THRESHOLD_ENV_KEY, DEFAULT_K_THRESHOLD_DEFAULT);
   let min_msgs_to_process =
     parse_env_var::<usize>(MIN_MSGS_TO_PROCESS_ENV_KEY, MIN_MSGS_TO_PROCESS_DEFAULT);
 
@@ -121,7 +135,8 @@ pub async fn start_aggregation(
     info!("Consuming messages from stream");
     let download_start_instant = Instant::now();
     // Consume & group as much data from Kafka as possible
-    let (grouped_msgs, count) = consume_and_group(&in_streams, msg_collect_count).await?;
+    let (grouped_msgs, count) =
+      consume_and_group(&in_streams, msg_collect_count, default_k_threshold).await?;
 
     if count == 0 {
       info!("No messages consumed");
@@ -158,7 +173,6 @@ pub async fn start_aggregation(
         db_pool.clone(),
         out_stream.clone(),
         grouped_msgs,
-        k_threshold,
         epoch_config.clone(),
         profiler.clone(),
       ));
