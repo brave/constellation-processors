@@ -49,14 +49,17 @@ fn get_measurement_contents(m: &PartialMeasurement) -> Result<(String, String), 
   }
 }
 
-pub fn recover_key(
-  messages: &[NestedMessage],
+pub fn recover_key<'a, I>(
+  messages: I,
+  messages_len: usize,
   epoch_tag: u8,
   k_threshold: usize,
-) -> Result<Vec<u8>, AppSTARError> {
-  let msgs_to_use = min(k_threshold + (k_threshold / 3), messages.len());
+) -> Result<Vec<u8>, AppSTARError>
+where
+  I: Iterator<Item = &'a NestedMessage>,
+{
+  let msgs_to_use = min(k_threshold + (k_threshold / 3), messages_len);
   let unencrypted_layers: Vec<_> = messages
-    .iter()
     .map(|v| &v.unencrypted_layer)
     .choose_multiple(&mut thread_rng(), msgs_to_use);
 
@@ -129,7 +132,7 @@ pub fn recover_msgs(
 #[cfg(test)]
 pub mod tests {
   use super::*;
-  use crate::aggregator::{K_THRESHOLD_DEFAULT, K_THRESHOLD_ENV_KEY};
+  use crate::aggregator::{DEFAULT_K_THRESHOLD_DEFAULT, DEFAULT_K_THRESHOLD_ENV_KEY};
   use star_constellation::api::client;
   use star_constellation::randomness::testing::LocalFetcher as RandomnessFetcher;
   use std::env;
@@ -149,9 +152,10 @@ pub mod tests {
       .iter()
       .map(|v| v.as_slice())
       .collect();
-    let k_threshold =
-      u32::from_str(&env::var(K_THRESHOLD_ENV_KEY).unwrap_or(K_THRESHOLD_DEFAULT.to_string()))
-        .unwrap();
+    let k_threshold = u32::from_str(
+      &env::var(DEFAULT_K_THRESHOLD_ENV_KEY).unwrap_or(DEFAULT_K_THRESHOLD_DEFAULT.to_string()),
+    )
+    .unwrap();
     let serialized_msg_bytes =
       client::construct_message(&points_slice_vec, None, &rrs, &None, &[], k_threshold).unwrap();
     let serialized_msg: SerializableNestedMessage =

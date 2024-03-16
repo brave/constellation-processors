@@ -85,7 +85,10 @@ async fn ident_handler() -> Result<impl Responder, WebError> {
   ))
 }
 
-fn extract_and_parse_header<T: FromStr>(request: &HttpRequest, header_name: &str) -> Option<T> {
+fn extract_and_parse_header<T: FromStr>(
+  request: &HttpRequest,
+  header_name: &'static str,
+) -> Option<T> {
   request
     .headers()
     .get(HeaderName::from_static(header_name))

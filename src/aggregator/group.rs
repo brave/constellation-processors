@@ -1,10 +1,10 @@
 use super::recovered::RecoveredMessages;
-use super::AggregatorError;
+use super::{AggregatorError, MessageWithThreshold};
 use crate::models::{BatchInsert, DBPool, DBStorageConnections, NewPendingMessage, PendingMessage};
 use crate::profiler::Profiler;
 use crate::star::serialize_message_bincode;
+use crate::util::most_common_value;
 use futures::future::try_join_all;
-use star_constellation::api::NestedMessage;
 use std::cmp::max;
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
@@ -15,9 +15,22 @@ const INSERT_BATCH_SIZE: usize = 10000;
 
 #[derive(Default, Clone)]
 pub struct MessageChunk {
-  pub new_msgs: Vec<NestedMessage>,
+  pub new_msgs: Vec<MessageWithThreshold>,
   pub pending_msgs: Vec<PendingMessage>,
   pub parent_msg_tag: Option<Vec<u8>>,
+}
+
+impl MessageChunk {
+  pub fn most_common_threshold(&self) -> Option<usize> {
+    most_common_value(
+      self.new_msgs.iter().map(|mwt| mwt.threshold).chain(
+        self
+          .pending_msgs
+          .iter()
+          .map(|mwt| mwt.threshold.max(0) as usize),
+      ),
+    )
+  }
 }
 
 type EpochChunksMap = HashMap<Vec<u8>, MessageChunk>;
@@ -31,12 +44,12 @@ pub struct GroupedMessages {
 }
 
 impl GroupedMessages {
-  pub fn add(&mut self, msg: NestedMessage, parent_msg_tag: Option<&[u8]>) {
-    let epoch_chunk = self.msg_chunks.entry(msg.epoch).or_default();
+  pub fn add(&mut self, mwt: MessageWithThreshold, parent_msg_tag: Option<&[u8]>) {
+    let epoch_chunk = self.msg_chunks.entry(mwt.msg.epoch).or_default();
     let chunk = epoch_chunk
-      .entry(msg.unencrypted_layer.tag.clone())
+      .entry(mwt.msg.unencrypted_layer.tag.clone())
       .or_default();
-    chunk.new_msgs.push(msg);
+    chunk.new_msgs.push(mwt);
     if chunk.parent_msg_tag.is_none() {
       if let Some(tag) = parent_msg_tag {
         chunk.parent_msg_tag = Some(tag.to_vec());
@@ -119,11 +132,13 @@ impl GroupedMessages {
       let mut new_pending_msgs = Vec::new();
 
       for (tag, chunk) in epoch_chunks {
-        for msg in chunk.new_msgs {
+        for mwt in chunk.new_msgs {
           new_pending_msgs.push(NewPendingMessage {
             msg_tag: tag.clone(),
             epoch_tag: epoch as i16,
-            message: serialize_message_bincode(msg)?,
+            message: serialize_message_bincode(mwt.msg)?,
+            threshold: i16::try_from(mwt.threshold)
+              .map_err(|_| AggregatorError::ThresholdTooBig)?,
           });
         }
       }
@@ -141,7 +156,7 @@ impl GroupedMessages {
   }
 
   pub fn split(mut self, chunk_count: usize) -> Vec<Self> {
-    let mut result: Vec<Self> = (0..chunk_count).map(|_| Self::default()).collect();
+    let mut result: Vec<Self> = (0..chunk_count).map(|_| Default::default()).collect();
     for (epoch, old_epoch_chunk) in &mut self.msg_chunks {
       let msg_tags: Vec<Vec<u8>> = old_epoch_chunk.keys().cloned().collect();
       let msg_tag_chunks: Vec<Vec<Vec<u8>>> = msg_tags
@@ -170,6 +185,8 @@ mod tests {
   use dotenvy::dotenv;
   use star_constellation::randomness::testing::LocalFetcher;
 
+  const THRESHOLD: usize = 50;
+
   #[tokio::test]
   async fn basic_group_and_pending_storage() {
     dotenv().ok();
@@ -191,7 +208,10 @@ mod tests {
 
     for (epoch, measurement) in msg_infos {
       grouped_msgs.add(
-        generate_test_message(epoch, &vec![measurement.as_bytes().to_vec()], &fetcher),
+        MessageWithThreshold {
+          msg: generate_test_message(epoch, &vec![measurement.as_bytes().to_vec()], &fetcher),
+          threshold: THRESHOLD,
+        },
         None,
       );
     }
@@ -226,7 +246,10 @@ mod tests {
 
     for (epoch, measurement) in msg_infos {
       grouped_msgs.add(
-        generate_test_message(epoch, &vec![measurement.as_bytes().to_vec()], &fetcher),
+        MessageWithThreshold {
+          msg: generate_test_message(epoch, &vec![measurement.as_bytes().to_vec()], &fetcher),
+          threshold: THRESHOLD,
+        },
         None,
       );
     }
@@ -264,11 +287,14 @@ mod tests {
       for i in 0..*tag_count {
         for _ in 0..2 {
           grouped_msgs.add(
-            generate_test_message(
-              *epoch,
-              &vec![format!("a|{}", i).as_bytes().to_vec()],
-              &fetcher,
-            ),
+            MessageWithThreshold {
+              msg: generate_test_message(
+                *epoch,
+                &vec![format!("a|{}", i).as_bytes().to_vec()],
+                &fetcher,
+              ),
+              threshold: THRESHOLD,
+            },
             None,
           );
         }
@@ -310,7 +336,10 @@ mod tests {
 
     for (epoch, measurement) in msg_infos {
       grouped_msgs.add(
-        generate_test_message(epoch, &vec![measurement.as_bytes().to_vec()], &fetcher),
+        MessageWithThreshold {
+          msg: generate_test_message(epoch, &vec![measurement.as_bytes().to_vec()], &fetcher),
+          threshold: THRESHOLD,
+        },
         None,
       );
     }

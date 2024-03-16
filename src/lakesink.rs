@@ -74,14 +74,14 @@ pub async fn start_lakesink(
         metrics.record_received();
         match lake.as_ref() {
           Some(lake) => {
-            batch.push(record);
+            batch.push(record.data);
             if batch.len() >= batch_size {
               store_batch(lake, &rec_stream, &channel_name, &batch, &metrics).await?;
               batch.clear();
             }
           },
           None => {
-            println!("{}", from_utf8(&record)?);
+            println!("{}", from_utf8(&record.data)?);
             rec_stream.commit_last_consume().await?;
           }
         };
