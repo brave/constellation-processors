@@ -1370,6 +1370,7 @@ dependencies = [
  "futures",
  "rand",
  "reqwest",
+ "serde",
  "star-constellation",
  "tokio",
 ]

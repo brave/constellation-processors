@@ -1,9 +1,9 @@
 use base64::{engine::general_purpose as base64_engine, Engine as _};
 use clap::Parser;
 use futures::future::try_join_all;
-use rand::{thread_rng, Rng};
+use serde::{Deserialize, Serialize};
 use star_constellation::api::*;
-use star_constellation::randomness::testing::{LocalFetcher, LocalFetcherResponse};
+use star_constellation::randomness::testing::LocalFetcher;
 use std::path::PathBuf;
 use std::str::FromStr;
 use std::sync::Arc;
@@ -14,12 +14,16 @@ use tokio::sync::Mutex;
 use tokio::task::JoinHandle;
 
 const DATA_GEN_TASKS: usize = 128;
+const THRESHOLD_HEADER_NAME: &str = "Brave-P3A-Constellation-Threshold";
 
 #[derive(Parser, Clone)]
 #[clap(version, about)]
 struct CliArgs {
   #[clap(long, default_value = "http://localhost:8080/")]
   url: String,
+
+  #[clap(long)]
+  randomness_server_url: Option<String>,
 
   #[clap(short, long, default_value = "10")]
   unique_count: usize,
@@ -41,22 +45,67 @@ struct CliArgs {
 
   #[clap(short, long, default_value = "30")]
   task_count: usize,
+
+  #[clap(long, help = "Omit threshold header in requests")]
+  omit_threshold_header: bool,
 }
 
-fn generate_messages(layers: &[Vec<u8>], cli_args: &CliArgs, count: usize) -> Vec<String> {
+#[derive(Serialize)]
+struct RandomnessRequest {
+  points: Vec<String>,
+  epoch: u8,
+}
+
+#[derive(Deserialize)]
+struct RandomnessResponse {
+  points: Vec<String>,
+}
+
+async fn generate_messages(layers: &[Vec<u8>], cli_args: &CliArgs, count: usize) -> Vec<String> {
   let rnd_fetcher = LocalFetcher::new();
   let example_aux = vec![];
-  (0..count)
-    .map(|_| {
-      let rrs = client::prepare_measurement(layers, cli_args.epoch).unwrap();
-      let req = client::construct_randomness_request(&rrs);
+  let client = reqwest::Client::new();
 
+  let mut messages = Vec::with_capacity(count);
+
+  for _ in 0..count {
+    let rrs = client::prepare_measurement(layers, cli_args.epoch).unwrap();
+    let req = client::construct_randomness_request(&rrs);
+
+    let points = if let Some(randomness_url) = &cli_args.randomness_server_url {
+      let resp = client
+        .post(randomness_url)
+        .json(&RandomnessRequest {
+          points: req
+            .into_iter()
+            .map(|p| base64_engine::STANDARD.encode(p))
+            .collect(),
+          epoch: cli_args.epoch,
+        })
+        .send()
+        .await
+        .unwrap();
+      if !resp.status().is_success() {
+        panic!("Randomness request failed: {}", resp.text().await.unwrap());
+      }
+      resp
+        .json::<RandomnessResponse>()
+        .await
+        .unwrap()
+        .points
+        .into_iter()
+        .map(|p| base64_engine::STANDARD.decode(p).unwrap())
+        .collect()
+    } else {
       let req_slice_vec: Vec<&[u8]> = req.iter().map(|v| v.as_slice()).collect();
-      let LocalFetcherResponse {
-        serialized_points, ..
-      } = rnd_fetcher.eval(&req_slice_vec, cli_args.epoch).unwrap();
+      rnd_fetcher
+        .eval(&req_slice_vec, cli_args.epoch)
+        .unwrap()
+        .serialized_points
+    };
 
-      let points_slice_vec: Vec<&[u8]> = serialized_points.iter().map(|v| v.as_slice()).collect();
+    let points_slice_vec: Vec<&[u8]> = points.iter().map(|v| v.as_slice()).collect();
+    messages.push(
       base64_engine::STANDARD.encode(
         client::construct_message(
           &points_slice_vec,
@@ -67,9 +116,10 @@ fn generate_messages(layers: &[Vec<u8>], cli_args: &CliArgs, count: usize) -> Ve
           cli_args.threshold,
         )
         .unwrap(),
-      )
-    })
-    .collect()
+      ),
+    )
+  }
+  messages
 }
 
 async fn gen_random_msgs(cli_args: &CliArgs) -> Vec<String> {
@@ -77,8 +127,6 @@ async fn gen_random_msgs(cli_args: &CliArgs) -> Vec<String> {
     .map(|i| {
       let cli_args = cli_args.clone();
       tokio::spawn(async move {
-        let mut rng = thread_rng();
-
         println!("Generating unique set {}", i);
 
         let measurement_layers: Vec<_> = (0..cli_args.layer_count)
@@ -88,7 +136,7 @@ async fn gen_random_msgs(cli_args: &CliArgs) -> Vec<String> {
           })
           .collect();
 
-        generate_messages(&measurement_layers, &cli_args, cli_args.threshold as usize)
+        generate_messages(&measurement_layers, &cli_args, cli_args.threshold as usize).await
       })
     })
     .collect();
@@ -152,7 +200,7 @@ async fn gen_msgs_from_data_and_save(csv_path: &str, cli_args: &CliArgs) {
             .map(|(name, value)| format!("{}|{}", name, value).as_bytes().to_vec())
             .collect();
 
-          task_msgs.extend(generate_messages(&layers, &cli_args, total));
+          task_msgs.extend(generate_messages(&layers, &cli_args, total).await);
 
           if j % 100 == 0 {
             println!(
@@ -175,6 +223,14 @@ async fn gen_msgs_from_data_and_save(csv_path: &str, cli_args: &CliArgs) {
   try_join_all(gen_tasks).await.unwrap();
 }
 
+async fn send_request(client: &reqwest::Client, msg: String, cli_args: &CliArgs) {
+  let mut builder = client.post(&cli_args.url);
+  if !cli_args.omit_threshold_header {
+    builder = builder.header(THRESHOLD_HEADER_NAME, cli_args.threshold);
+  }
+  builder.body(msg).send().await.unwrap();
+}
+
 async fn send_random_messages(cli_args: &CliArgs) {
   println!("Generating random messages...");
   let messages = gen_random_msgs(cli_args).await;
@@ -190,15 +246,14 @@ async fn send_random_messages(cli_args: &CliArgs) {
   println!("Sending requests...");
 
   let start_time = Instant::now();
-
   let tasks: Vec<_> = message_chunks
     .into_iter()
     .map(|chunk| {
-      let url = cli_args.url.clone();
+      let cli_args = cli_args.clone();
       tokio::spawn(async move {
         let client = reqwest::Client::new();
         for msg in chunk {
-          client.post(&url).body(msg).send().await.unwrap();
+          send_request(&client, msg, &cli_args).await;
         }
       })
     })
@@ -219,7 +274,7 @@ async fn send_messages_from_file(cli_args: &CliArgs, messages_file: &str) {
 
   let tasks: Vec<_> = (0..cli_args.task_count)
     .map(|_| {
-      let url = cli_args.url.clone();
+      let cli_args = cli_args.clone();
       let reader = reader.clone();
       tokio::spawn(async move {
         let client = reqwest::Client::new();
@@ -232,7 +287,7 @@ async fn send_messages_from_file(cli_args: &CliArgs, messages_file: &str) {
           if msg.is_empty() {
             continue;
           }
-          client.post(&url).body(msg).send().await.unwrap();
+          send_request(&client, msg, &cli_args).await;
           count += 1;
         }
         count
