@@ -1,5 +1,6 @@
 use super::group::GroupedMessages;
-use super::{AggregatorError, MessageWithThreshold};
+use super::AggregatorError;
+use crate::models::MessageWithThreshold;
 use crate::record_stream::{ConsumedRecord, RecordStreamArc};
 use crate::star::parse_message;
 use crate::util::parse_env_var;

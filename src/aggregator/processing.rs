@@ -1,13 +1,17 @@
 use super::group::GroupedMessages;
 use super::recovered::RecoveredMessages;
 use super::report::report_measurements;
-use super::{AggregatorError, MessageWithThreshold};
+use super::AggregatorError;
 use crate::epoch::EpochConfig;
-use crate::models::{DBConnection, DBPool, DBStorageConnections, PendingMessage, RecoveredMessage};
+use crate::models::{
+  DBConnection, DBPool, DBStorageConnections, MessageWithThreshold, PendingMessage,
+  RecoveredMessage,
+};
 use crate::profiler::{Profiler, ProfilerStat};
 use crate::record_stream::{DynRecordStream, RecordStreamArc};
 use crate::star::{recover_key, recover_msgs, AppSTARError, MsgRecoveryInfo};
 use star_constellation::Error as ConstellationError;
+use std::collections::HashSet;
 use std::sync::{Arc, Mutex};
 use std::time::Instant;
 use tokio::task::JoinHandle;
@@ -57,43 +61,44 @@ fn process_one_layer(
     for (msg_tag, chunk) in epoch_map {
       let existing_rec_msg = rec_msgs.get_mut(*epoch, msg_tag);
 
-      let threshold = chunk
-        .most_common_threshold()
-        .expect("should be able to find common threshold among messages");
+      let recovery_threshold = chunk.recoverable_threshold();
 
       // if we don't have a key for this tag, check to see if it meets the k threshold
       // if not, skip it
-      if existing_rec_msg.is_none() && chunk.new_msgs.len() + chunk.pending_msgs.len() < threshold {
+      if existing_rec_msg.is_none() && recovery_threshold.is_none() {
         continue;
       }
-      let new_msg_count = chunk.new_msgs.len();
-      let has_pending_msgs = !chunk.pending_msgs.is_empty();
 
-      // concat new messages from kafka, and pending messages from PG into one vec
-      // "mwt" = message with threshold
-      let mut mwts = Vec::new();
-      mwts.append(&mut chunk.new_msgs);
-      for pending_msg in chunk.pending_msgs.drain(..) {
-        mwts.push(pending_msg.try_into()?);
-      }
+      let has_pending_msgs = chunk.pending_msgs.values().any(|v| !v.is_empty());
+
+      // create vec to concat new messages from kafka, and pending messages from PG
+      // for key recovery
+      let mut key_recovery_msgs: Option<Vec<_>> = None;
 
       // if a recovered msg exists, use the key that was already recovered.
       // otherwise, recover the key
       let key = if let Some(rec_msg) = existing_rec_msg.as_ref() {
         rec_msg.key.clone()
       } else {
-        match recover_key(
-          mwts.iter().map(|mwt| &mwt.msg),
-          mwts.len(),
-          *epoch,
-          threshold,
-        ) {
+        let threshold = recovery_threshold.unwrap();
+        let new_msg_count = chunk.new_msgs.len();
+
+        let mut msgs = Vec::new();
+        // drain messages required for recovery into the vec
+        msgs.append(chunk.new_msgs.get_mut(&threshold).unwrap());
+        if let Some(pending_msgs) = chunk.pending_msgs.get_mut(&threshold) {
+          for pending_msg in pending_msgs.drain(..) {
+            msgs.push(pending_msg.try_into()?);
+          }
+        }
+
+        let key = match recover_key(&msgs, *epoch, threshold) {
           Err(e) => {
             match e {
               AppSTARError::Recovery(ConstellationError::ShareRecovery) => {
                 // Store new messages until we receive more shares in the future.
-                for msg in mwts.drain(..new_msg_count) {
-                  chunk.new_msgs.push(msg);
+                for msg in msgs.drain(..new_msg_count) {
+                  chunk.new_msgs.get_mut(&threshold).unwrap().push(msg);
                 }
                 continue;
               }
@@ -101,40 +106,80 @@ fn process_one_layer(
             };
           }
           Ok(key) => key,
-        }
+        };
+        // cache the messages used for key recovery, so they can be used
+        // for measurement recovery
+        key_recovery_msgs = Some(msgs);
+        key
       };
 
-      let mwts_len = mwts.len() as i64;
+      let mut msgs_len = 0i64;
+      let mut metric_name: Option<String> = None;
+      let mut metric_value: Option<String> = None;
+      let mut has_children = false;
 
-      let MsgRecoveryInfo {
-        measurement,
-        next_layer_messages,
-        error_count,
-      } = recover_msgs(mwts.into_iter().map(|mwt| mwt.msg).collect(), &key)?;
-      total_error_count += error_count;
+      let mut thresholds = HashSet::new();
+      thresholds.extend(chunk.new_msgs.keys());
+      thresholds.extend(chunk.pending_msgs.keys());
+
+      for threshold in thresholds {
+        let msgs = if recovery_threshold == Some(threshold) && key_recovery_msgs.is_some() {
+          key_recovery_msgs.take().unwrap()
+        } else {
+          let mut msgs = Vec::new();
+          if let Some(new_msgs) = chunk.new_msgs.get_mut(&threshold) {
+            msgs.append(new_msgs);
+          }
+          if let Some(pending_msgs) = chunk.pending_msgs.get_mut(&threshold) {
+            for pending_msg in pending_msgs.drain(..) {
+              msgs.push(pending_msg.try_into()?);
+            }
+          }
+          msgs
+        };
+
+        if msgs.is_empty() {
+          continue;
+        }
+        msgs_len += msgs.len() as i64;
+
+        let MsgRecoveryInfo {
+          measurement,
+          next_layer_messages,
+          error_count,
+        } = recover_msgs(msgs, &key)?;
+
+        metric_name = Some(measurement.0);
+        metric_value = Some(measurement.1);
+
+        total_error_count += error_count;
+        if next_layer_messages.is_some() {
+          has_children = true;
+        }
+
+        // save messages in the next layer in a new GroupedMessages struct
+        if let Some(child_msgs) = next_layer_messages {
+          for msg in child_msgs {
+            next_grouped_msgs.add(MessageWithThreshold { msg, threshold }, Some(msg_tag));
+          }
+        }
+      }
 
       // create or update recovered msg with new count
       if let Some(rec_msg) = existing_rec_msg {
-        rec_msg.count += mwts_len;
+        rec_msg.count += msgs_len;
       } else {
         rec_msgs.add(RecoveredMessage {
           id: 0,
           msg_tag: msg_tag.clone(),
           epoch_tag: *epoch as i16,
-          metric_name: measurement.0,
-          metric_value: measurement.1,
+          metric_name: metric_name.unwrap(),
+          metric_value: metric_value.unwrap(),
           parent_recovered_msg_tag: chunk.parent_msg_tag.clone(),
-          count: mwts_len,
+          count: msgs_len,
           key: key.to_vec(),
-          has_children: next_layer_messages.is_some(),
+          has_children,
         });
-      }
-
-      // save messages in the next layer in a new GroupedMessages struct
-      if let Some(child_msgs) = next_layer_messages {
-        for msg in child_msgs {
-          next_grouped_msgs.add(MessageWithThreshold { msg, threshold }, Some(msg_tag));
-        }
       }
 
       if has_pending_msgs {

@@ -14,6 +14,7 @@ use diesel::pg::PgConnection;
 use diesel::r2d2::{ConnectionManager, CustomizeConnection, Pool, PooledConnection};
 use diesel_migrations::{embed_migrations, EmbeddedMigrations, MigrationHarness};
 use rand::{seq::SliceRandom, thread_rng};
+use star_constellation::api::NestedMessage;
 use std::env;
 use std::ops::DerefMut;
 use std::str::FromStr;
@@ -36,6 +37,12 @@ const DB_POOL_TIMEOUT_SECS: u64 = 3600;
 const DB_POOL_POLL_MS: u64 = 100;
 
 const MIGRATIONS: EmbeddedMigrations = embed_migrations!("migrations");
+
+#[derive(Clone)]
+pub struct MessageWithThreshold {
+  pub msg: NestedMessage,
+  pub threshold: usize,
+}
 
 pub type DBConnection = PooledConnection<ConnectionManager<PgConnection>>;
 

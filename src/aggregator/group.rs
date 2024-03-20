@@ -1,10 +1,13 @@
 use super::recovered::RecoveredMessages;
-use super::{AggregatorError, MessageWithThreshold};
-use crate::models::{BatchInsert, DBPool, DBStorageConnections, NewPendingMessage, PendingMessage};
+use super::AggregatorError;
+use crate::models::{
+  BatchInsert, DBPool, DBStorageConnections, MessageWithThreshold, NewPendingMessage,
+  PendingMessage,
+};
 use crate::profiler::Profiler;
 use crate::star::serialize_message_bincode;
-use crate::util::most_common_value;
 use futures::future::try_join_all;
+use star_constellation::api::NestedMessage;
 use std::cmp::max;
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
@@ -15,21 +18,27 @@ const INSERT_BATCH_SIZE: usize = 10000;
 
 #[derive(Default, Clone)]
 pub struct MessageChunk {
-  pub new_msgs: Vec<MessageWithThreshold>,
-  pub pending_msgs: Vec<PendingMessage>,
+  /// Threshold mapped to nested messages
+  pub new_msgs: HashMap<usize, Vec<NestedMessage>>,
+  /// Threshold mapped to pending messages
+  pub pending_msgs: HashMap<usize, Vec<PendingMessage>>,
   pub parent_msg_tag: Option<Vec<u8>>,
 }
 
 impl MessageChunk {
-  pub fn most_common_threshold(&self) -> Option<usize> {
-    most_common_value(
-      self.new_msgs.iter().map(|mwt| mwt.threshold).chain(
-        self
-          .pending_msgs
-          .iter()
-          .map(|mwt| mwt.threshold.max(0) as usize),
-      ),
-    )
+  pub fn recoverable_threshold(&self) -> Option<usize> {
+    for (threshold, new_msgs) in &self.new_msgs {
+      let pending_msgs_len = self
+        .pending_msgs
+        .get(threshold)
+        .map(|m| m.len())
+        .unwrap_or_default();
+
+      if new_msgs.len() + pending_msgs_len >= *threshold {
+        return Some(*threshold);
+      }
+    }
+    None
   }
 }
 
@@ -49,7 +58,11 @@ impl GroupedMessages {
     let chunk = epoch_chunk
       .entry(mwt.msg.unencrypted_layer.tag.clone())
       .or_default();
-    chunk.new_msgs.push(mwt);
+    chunk
+      .new_msgs
+      .entry(mwt.threshold)
+      .or_default()
+      .push(mwt.msg);
     if chunk.parent_msg_tag.is_none() {
       if let Some(tag) = parent_msg_tag {
         chunk.parent_msg_tag = Some(tag.to_vec());
@@ -65,7 +78,7 @@ impl GroupedMessages {
   ) -> Result<(), AggregatorError> {
     let conn = Arc::new(Mutex::new(db_pool.get().await?));
     for (epoch, epoch_chunks) in self.msg_chunks.iter() {
-      let msg_tags: Vec<Vec<u8>> = epoch_chunks.keys().cloned().collect();
+      let msg_tags: Vec<_> = epoch_chunks.keys().cloned().collect();
       rec_msgs
         .fetch_recovered(conn.clone(), *epoch, msg_tags, profiler.clone())
         .await?;
@@ -112,7 +125,13 @@ impl GroupedMessages {
       for res in task_results {
         for (tag, msgs) in res? {
           let chunk = epoch_chunks.get_mut(&tag).unwrap();
-          chunk.pending_msgs = msgs;
+          for msg in msgs {
+            chunk
+              .pending_msgs
+              .entry(msg.threshold.max(0) as usize)
+              .or_default()
+              .push(msg);
+          }
         }
       }
     }
@@ -132,14 +151,15 @@ impl GroupedMessages {
       let mut new_pending_msgs = Vec::new();
 
       for (tag, chunk) in epoch_chunks {
-        for mwt in chunk.new_msgs {
-          new_pending_msgs.push(NewPendingMessage {
-            msg_tag: tag.clone(),
-            epoch_tag: epoch as i16,
-            message: serialize_message_bincode(mwt.msg)?,
-            threshold: i16::try_from(mwt.threshold)
-              .map_err(|_| AggregatorError::ThresholdTooBig)?,
-          });
+        for (threshold, msgs) in chunk.new_msgs {
+          for msg in msgs {
+            new_pending_msgs.push(NewPendingMessage {
+              msg_tag: tag.clone(),
+              epoch_tag: epoch as i16,
+              message: serialize_message_bincode(msg)?,
+              threshold: i16::try_from(threshold).map_err(|_| AggregatorError::ThresholdTooBig)?,
+            });
+          }
         }
       }
 
@@ -228,7 +248,10 @@ mod tests {
 
     for (epoch, expected_tag_counts) in &expected_epoch_counts {
       let epoch_map = grouped_msgs.msg_chunks.get(&epoch).unwrap();
-      let mut tag_counts: Vec<usize> = epoch_map.values().map(|v| v.new_msgs.len()).collect();
+      let mut tag_counts: Vec<usize> = epoch_map
+        .values()
+        .map(|v| v.new_msgs.values().map(|w| w.len()).sum())
+        .collect();
       tag_counts.sort();
       assert_eq!(&tag_counts, expected_tag_counts);
     }
@@ -270,7 +293,10 @@ mod tests {
       let epoch_map = grouped_msgs.msg_chunks.get(&epoch).unwrap();
       let mut tag_counts: Vec<usize> = epoch_map
         .values()
-        .map(|v| v.new_msgs.len() + v.pending_msgs.len())
+        .map(|v| {
+          v.new_msgs.values().map(|w| w.len()).sum::<usize>()
+            + v.pending_msgs.values().map(|w| w.len()).sum::<usize>()
+        })
         .collect();
       tag_counts.sort();
       assert_eq!(&tag_counts, expected_tag_counts);
@@ -310,7 +336,7 @@ mod tests {
       for epoch_map in grouped_msgs.msg_chunks.values() {
         assert!(epoch_map.len() >= 5 && epoch_map.len() <= 12);
         for tag_val in epoch_map.values() {
-          assert_eq!(tag_val.new_msgs.len(), 2);
+          assert_eq!(tag_val.new_msgs.values().map(|v| v.len()).sum::<usize>(), 2);
         }
       }
     }
