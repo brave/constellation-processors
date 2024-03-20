@@ -49,17 +49,14 @@ fn get_measurement_contents(m: &PartialMeasurement) -> Result<(String, String), 
   }
 }
 
-pub fn recover_key<'a, I>(
-  messages: I,
-  messages_len: usize,
+pub fn recover_key(
+  messages: &[NestedMessage],
   epoch_tag: u8,
   k_threshold: usize,
-) -> Result<Vec<u8>, AppSTARError>
-where
-  I: Iterator<Item = &'a NestedMessage>,
-{
-  let msgs_to_use = min(k_threshold + (k_threshold / 3), messages_len);
+) -> Result<Vec<u8>, AppSTARError> {
+  let msgs_to_use = min(k_threshold + (k_threshold / 3), messages.len());
   let unencrypted_layers: Vec<_> = messages
+    .iter()
     .map(|v| &v.unencrypted_layer)
     .choose_multiple(&mut thread_rng(), msgs_to_use);
 

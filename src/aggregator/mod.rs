@@ -7,20 +7,19 @@ mod report;
 use crate::epoch::EpochConfig;
 use crate::models::{
   begin_db_transaction, commit_db_transaction, DBConnectionType, DBPool, DBStorageConnections,
-  PendingMessage, PgStoreError,
+  PgStoreError,
 };
 use crate::profiler::{Profiler, ProfilerStat};
 use crate::record_stream::{
   get_data_channel_topic_from_env, KafkaRecordStream, KafkaRecordStreamConfig, RecordStream,
   RecordStreamArc, RecordStreamError,
 };
-use crate::star::{parse_message, AppSTARError};
+use crate::star::AppSTARError;
 use crate::util::parse_env_var;
 use consume::consume_and_group;
 use derive_more::{Display, Error, From};
 use futures::future::try_join_all;
 use processing::{process_expired_epochs, start_subtask};
-use star_constellation::api::NestedMessage;
 use star_constellation::Error as ConstellationError;
 use std::str::Utf8Error;
 use std::sync::{Arc, Mutex};
@@ -45,23 +44,6 @@ pub enum AggregatorError {
   Join(JoinError),
   JSONSerialize(serde_json::Error),
   ThresholdTooBig,
-}
-
-#[derive(Clone)]
-pub struct MessageWithThreshold {
-  msg: NestedMessage,
-  threshold: usize,
-}
-
-impl TryFrom<PendingMessage> for MessageWithThreshold {
-  type Error = AppSTARError;
-
-  fn try_from(msg: PendingMessage) -> Result<Self, Self::Error> {
-    Ok(Self {
-      msg: parse_message(&msg.message)?,
-      threshold: msg.threshold.max(0) as usize,
-    })
-  }
 }
 
 fn create_output_stream(
