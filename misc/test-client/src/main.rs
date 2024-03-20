@@ -4,6 +4,7 @@ use futures::future::try_join_all;
 use serde::{Deserialize, Serialize};
 use star_constellation::api::*;
 use star_constellation::randomness::testing::LocalFetcher;
+use std::fs::remove_file;
 use std::path::PathBuf;
 use std::str::FromStr;
 use std::sync::Arc;
@@ -167,6 +168,8 @@ async fn gen_msgs_from_data_and_save(csv_path: &str, cli_args: &CliArgs) {
 
   let mut new_path = PathBuf::from(csv_path);
   new_path.set_extension("b64l");
+  remove_file(&new_path).ok();
+
   let file = Arc::new(Mutex::new(
     OpenOptions::new()
       .create(true)
@@ -318,12 +321,11 @@ async fn main() {
   if let Some(gen_data_file) = cli_args.gen_data_file.as_ref() {
     println!("Generating messages from data file...");
     gen_msgs_from_data_and_save(gen_data_file, &cli_args).await;
-    return;
   }
 
   if let Some(messages_file) = cli_args.messages_file.as_ref() {
     send_messages_from_file(&cli_args, messages_file).await;
-  } else {
+  } else if cli_args.gen_data_file.is_none() {
     println!("Generating random messages...");
     send_random_messages(&cli_args).await;
   }
