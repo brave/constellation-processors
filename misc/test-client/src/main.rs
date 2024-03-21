@@ -1,6 +1,8 @@
 use base64::{engine::general_purpose as base64_engine, Engine as _};
 use clap::Parser;
 use futures::future::try_join_all;
+use rand::rngs::StdRng;
+use rand::{Rng, SeedableRng};
 use serde::{Deserialize, Serialize};
 use star_constellation::api::*;
 use star_constellation::randomness::testing::LocalFetcher;
@@ -62,6 +64,37 @@ struct RandomnessResponse {
   points: Vec<String>,
 }
 
+async fn points_from_randomness_server(
+  client: &reqwest::Client,
+  randomness_url: &str,
+  epoch: u8,
+  req: Vec<Vec<u8>>,
+) -> Vec<Vec<u8>> {
+  let resp = client
+    .post(randomness_url)
+    .json(&RandomnessRequest {
+      points: req
+        .into_iter()
+        .map(|p| base64_engine::STANDARD.encode(p))
+        .collect(),
+      epoch,
+    })
+    .send()
+    .await
+    .unwrap();
+  if !resp.status().is_success() {
+    panic!("Randomness request failed: {}", resp.text().await.unwrap());
+  }
+  resp
+    .json::<RandomnessResponse>()
+    .await
+    .unwrap()
+    .points
+    .into_iter()
+    .map(|p| base64_engine::STANDARD.decode(p).unwrap())
+    .collect()
+}
+
 async fn generate_messages(layers: &[Vec<u8>], cli_args: &CliArgs, count: usize) -> Vec<String> {
   let rnd_fetcher = LocalFetcher::new();
   let example_aux = vec![];
@@ -74,29 +107,7 @@ async fn generate_messages(layers: &[Vec<u8>], cli_args: &CliArgs, count: usize)
     let req = client::construct_randomness_request(&rrs);
 
     let points = if let Some(randomness_url) = &cli_args.randomness_server_url {
-      let resp = client
-        .post(randomness_url)
-        .json(&RandomnessRequest {
-          points: req
-            .into_iter()
-            .map(|p| base64_engine::STANDARD.encode(p))
-            .collect(),
-          epoch: cli_args.epoch,
-        })
-        .send()
-        .await
-        .unwrap();
-      if !resp.status().is_success() {
-        panic!("Randomness request failed: {}", resp.text().await.unwrap());
-      }
-      resp
-        .json::<RandomnessResponse>()
-        .await
-        .unwrap()
-        .points
-        .into_iter()
-        .map(|p| base64_engine::STANDARD.decode(p).unwrap())
-        .collect()
+      points_from_randomness_server(&client, randomness_url.as_str(), cli_args.epoch, req).await
     } else {
       let req_slice_vec: Vec<&[u8]> = req.iter().map(|v| v.as_slice()).collect();
       rnd_fetcher
@@ -128,11 +139,12 @@ async fn gen_random_msgs(cli_args: &CliArgs) -> Vec<String> {
     .map(|i| {
       let cli_args = cli_args.clone();
       tokio::spawn(async move {
+        let mut rng = StdRng::from_entropy();
         println!("Generating unique set {}", i);
 
         let measurement_layers: Vec<_> = (0..cli_args.layer_count)
           .map(|i| {
-            let r: u32 = 0;
+            let r: u32 = rng.gen();
             format!("layer{}|{}", i, r).as_bytes().to_vec()
           })
           .collect();
