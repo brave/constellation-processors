@@ -1,6 +1,9 @@
 use super::recovered::RecoveredMessages;
 use super::AggregatorError;
-use crate::models::{BatchInsert, DBPool, DBStorageConnections, NewPendingMessage, PendingMessage};
+use crate::models::{
+  BatchInsert, DBPool, DBStorageConnections, MessageWithThreshold, NewPendingMessage,
+  PendingMessage,
+};
 use crate::profiler::Profiler;
 use crate::star::serialize_message_bincode;
 use futures::future::try_join_all;
@@ -15,9 +18,28 @@ const INSERT_BATCH_SIZE: usize = 10000;
 
 #[derive(Default, Clone)]
 pub struct MessageChunk {
-  pub new_msgs: Vec<NestedMessage>,
-  pub pending_msgs: Vec<PendingMessage>,
+  /// Threshold mapped to nested messages
+  pub new_msgs: HashMap<usize, Vec<NestedMessage>>,
+  /// Threshold mapped to pending messages
+  pub pending_msgs: HashMap<usize, Vec<PendingMessage>>,
   pub parent_msg_tag: Option<Vec<u8>>,
+}
+
+impl MessageChunk {
+  pub fn recoverable_threshold(&self) -> Option<usize> {
+    for (threshold, new_msgs) in &self.new_msgs {
+      let pending_msgs_len = self
+        .pending_msgs
+        .get(threshold)
+        .map(|m| m.len())
+        .unwrap_or_default();
+
+      if new_msgs.len() + pending_msgs_len >= *threshold {
+        return Some(*threshold);
+      }
+    }
+    None
+  }
 }
 
 type EpochChunksMap = HashMap<Vec<u8>, MessageChunk>;
@@ -31,12 +53,16 @@ pub struct GroupedMessages {
 }
 
 impl GroupedMessages {
-  pub fn add(&mut self, msg: NestedMessage, parent_msg_tag: Option<&[u8]>) {
-    let epoch_chunk = self.msg_chunks.entry(msg.epoch).or_default();
+  pub fn add(&mut self, mwt: MessageWithThreshold, parent_msg_tag: Option<&[u8]>) {
+    let epoch_chunk = self.msg_chunks.entry(mwt.msg.epoch).or_default();
     let chunk = epoch_chunk
-      .entry(msg.unencrypted_layer.tag.clone())
+      .entry(mwt.msg.unencrypted_layer.tag.clone())
       .or_default();
-    chunk.new_msgs.push(msg);
+    chunk
+      .new_msgs
+      .entry(mwt.threshold)
+      .or_default()
+      .push(mwt.msg);
     if chunk.parent_msg_tag.is_none() {
       if let Some(tag) = parent_msg_tag {
         chunk.parent_msg_tag = Some(tag.to_vec());
@@ -52,7 +78,7 @@ impl GroupedMessages {
   ) -> Result<(), AggregatorError> {
     let conn = Arc::new(Mutex::new(db_pool.get().await?));
     for (epoch, epoch_chunks) in self.msg_chunks.iter() {
-      let msg_tags: Vec<Vec<u8>> = epoch_chunks.keys().cloned().collect();
+      let msg_tags: Vec<_> = epoch_chunks.keys().cloned().collect();
       rec_msgs
         .fetch_recovered(conn.clone(), *epoch, msg_tags, profiler.clone())
         .await?;
@@ -99,7 +125,13 @@ impl GroupedMessages {
       for res in task_results {
         for (tag, msgs) in res? {
           let chunk = epoch_chunks.get_mut(&tag).unwrap();
-          chunk.pending_msgs = msgs;
+          for msg in msgs {
+            chunk
+              .pending_msgs
+              .entry(msg.threshold.max(0) as usize)
+              .or_default()
+              .push(msg);
+          }
         }
       }
     }
@@ -119,12 +151,15 @@ impl GroupedMessages {
       let mut new_pending_msgs = Vec::new();
 
       for (tag, chunk) in epoch_chunks {
-        for msg in chunk.new_msgs {
-          new_pending_msgs.push(NewPendingMessage {
-            msg_tag: tag.clone(),
-            epoch_tag: epoch as i16,
-            message: serialize_message_bincode(msg)?,
-          });
+        for (threshold, msgs) in chunk.new_msgs {
+          for msg in msgs {
+            new_pending_msgs.push(NewPendingMessage {
+              msg_tag: tag.clone(),
+              epoch_tag: epoch as i16,
+              message: serialize_message_bincode(msg)?,
+              threshold: i16::try_from(threshold).map_err(|_| AggregatorError::ThresholdTooBig)?,
+            });
+          }
         }
       }
 
@@ -141,7 +176,7 @@ impl GroupedMessages {
   }
 
   pub fn split(mut self, chunk_count: usize) -> Vec<Self> {
-    let mut result: Vec<Self> = (0..chunk_count).map(|_| Self::default()).collect();
+    let mut result: Vec<Self> = (0..chunk_count).map(|_| Default::default()).collect();
     for (epoch, old_epoch_chunk) in &mut self.msg_chunks {
       let msg_tags: Vec<Vec<u8>> = old_epoch_chunk.keys().cloned().collect();
       let msg_tag_chunks: Vec<Vec<Vec<u8>>> = msg_tags
@@ -170,6 +205,8 @@ mod tests {
   use dotenvy::dotenv;
   use star_constellation::randomness::testing::LocalFetcher;
 
+  const THRESHOLD: usize = 50;
+
   #[tokio::test]
   async fn basic_group_and_pending_storage() {
     dotenv().ok();
@@ -191,7 +228,10 @@ mod tests {
 
     for (epoch, measurement) in msg_infos {
       grouped_msgs.add(
-        generate_test_message(epoch, &vec![measurement.as_bytes().to_vec()], &fetcher),
+        MessageWithThreshold {
+          msg: generate_test_message(epoch, &vec![measurement.as_bytes().to_vec()], &fetcher),
+          threshold: THRESHOLD,
+        },
         None,
       );
     }
@@ -208,7 +248,10 @@ mod tests {
 
     for (epoch, expected_tag_counts) in &expected_epoch_counts {
       let epoch_map = grouped_msgs.msg_chunks.get(&epoch).unwrap();
-      let mut tag_counts: Vec<usize> = epoch_map.values().map(|v| v.new_msgs.len()).collect();
+      let mut tag_counts: Vec<usize> = epoch_map
+        .values()
+        .map(|v| v.new_msgs.values().map(|w| w.len()).sum())
+        .collect();
       tag_counts.sort();
       assert_eq!(&tag_counts, expected_tag_counts);
     }
@@ -226,7 +269,10 @@ mod tests {
 
     for (epoch, measurement) in msg_infos {
       grouped_msgs.add(
-        generate_test_message(epoch, &vec![measurement.as_bytes().to_vec()], &fetcher),
+        MessageWithThreshold {
+          msg: generate_test_message(epoch, &vec![measurement.as_bytes().to_vec()], &fetcher),
+          threshold: THRESHOLD,
+        },
         None,
       );
     }
@@ -247,7 +293,10 @@ mod tests {
       let epoch_map = grouped_msgs.msg_chunks.get(&epoch).unwrap();
       let mut tag_counts: Vec<usize> = epoch_map
         .values()
-        .map(|v| v.new_msgs.len() + v.pending_msgs.len())
+        .map(|v| {
+          v.new_msgs.values().map(|w| w.len()).sum::<usize>()
+            + v.pending_msgs.values().map(|w| w.len()).sum::<usize>()
+        })
         .collect();
       tag_counts.sort();
       assert_eq!(&tag_counts, expected_tag_counts);
@@ -264,11 +313,14 @@ mod tests {
       for i in 0..*tag_count {
         for _ in 0..2 {
           grouped_msgs.add(
-            generate_test_message(
-              *epoch,
-              &vec![format!("a|{}", i).as_bytes().to_vec()],
-              &fetcher,
-            ),
+            MessageWithThreshold {
+              msg: generate_test_message(
+                *epoch,
+                &vec![format!("a|{}", i).as_bytes().to_vec()],
+                &fetcher,
+              ),
+              threshold: THRESHOLD,
+            },
             None,
           );
         }
@@ -284,7 +336,7 @@ mod tests {
       for epoch_map in grouped_msgs.msg_chunks.values() {
         assert!(epoch_map.len() >= 5 && epoch_map.len() <= 12);
         for tag_val in epoch_map.values() {
-          assert_eq!(tag_val.new_msgs.len(), 2);
+          assert_eq!(tag_val.new_msgs.values().map(|v| v.len()).sum::<usize>(), 2);
         }
       }
     }
@@ -310,7 +362,10 @@ mod tests {
 
     for (epoch, measurement) in msg_infos {
       grouped_msgs.add(
-        generate_test_message(epoch, &vec![measurement.as_bytes().to_vec()], &fetcher),
+        MessageWithThreshold {
+          msg: generate_test_message(epoch, &vec![measurement.as_bytes().to_vec()], &fetcher),
+          threshold: THRESHOLD,
+        },
         None,
       );
     }

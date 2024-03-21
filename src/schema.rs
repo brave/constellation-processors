@@ -6,6 +6,7 @@ diesel::table! {
         msg_tag -> Bytea,
         epoch_tag -> Int2,
         message -> Bytea,
+        threshold -> Int2,
     }
 }
 

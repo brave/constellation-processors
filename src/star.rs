@@ -129,7 +129,7 @@ pub fn recover_msgs(
 #[cfg(test)]
 pub mod tests {
   use super::*;
-  use crate::aggregator::{K_THRESHOLD_DEFAULT, K_THRESHOLD_ENV_KEY};
+  use crate::aggregator::{DEFAULT_K_THRESHOLD_DEFAULT, DEFAULT_K_THRESHOLD_ENV_KEY};
   use star_constellation::api::client;
   use star_constellation::randomness::testing::LocalFetcher as RandomnessFetcher;
   use std::env;
@@ -149,9 +149,10 @@ pub mod tests {
       .iter()
       .map(|v| v.as_slice())
       .collect();
-    let k_threshold =
-      u32::from_str(&env::var(K_THRESHOLD_ENV_KEY).unwrap_or(K_THRESHOLD_DEFAULT.to_string()))
-        .unwrap();
+    let k_threshold = u32::from_str(
+      &env::var(DEFAULT_K_THRESHOLD_ENV_KEY).unwrap_or(DEFAULT_K_THRESHOLD_DEFAULT.to_string()),
+    )
+    .unwrap();
     let serialized_msg_bytes =
       client::construct_message(&points_slice_vec, None, &rrs, &None, &[], k_threshold).unwrap();
     let serialized_msg: SerializableNestedMessage =

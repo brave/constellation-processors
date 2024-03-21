@@ -26,8 +26,8 @@ use std::sync::{Arc, Mutex};
 use std::time::Instant;
 use tokio::task::JoinError;
 
-pub const K_THRESHOLD_ENV_KEY: &str = "K_THRESHOLD";
-pub const K_THRESHOLD_DEFAULT: &str = "50";
+pub const DEFAULT_K_THRESHOLD_ENV_KEY: &str = "K_THRESHOLD";
+pub const DEFAULT_K_THRESHOLD_DEFAULT: &str = "50";
 pub const MIN_MSGS_TO_PROCESS_ENV_KEY: &str = "MIN_MSGS_TO_PROCESS";
 pub const MIN_MSGS_TO_PROCESS_DEFAULT: &str = "1000";
 
@@ -43,6 +43,7 @@ pub enum AggregatorError {
   RecordStream(RecordStreamError),
   Join(JoinError),
   JSONSerialize(serde_json::Error),
+  ThresholdTooBig,
 }
 
 fn create_output_stream(
@@ -82,7 +83,8 @@ pub async fn start_aggregation(
 ) -> Result<(), AggregatorError> {
   info!("Current epoch is {}", epoch_config.current_epoch.epoch);
 
-  let k_threshold = parse_env_var::<usize>(K_THRESHOLD_ENV_KEY, K_THRESHOLD_DEFAULT);
+  let default_k_threshold =
+    parse_env_var::<usize>(DEFAULT_K_THRESHOLD_ENV_KEY, DEFAULT_K_THRESHOLD_DEFAULT);
   let min_msgs_to_process =
     parse_env_var::<usize>(MIN_MSGS_TO_PROCESS_ENV_KEY, MIN_MSGS_TO_PROCESS_DEFAULT);
 
@@ -115,7 +117,8 @@ pub async fn start_aggregation(
     info!("Consuming messages from stream");
     let download_start_instant = Instant::now();
     // Consume & group as much data from Kafka as possible
-    let (grouped_msgs, count) = consume_and_group(&in_streams, msg_collect_count).await?;
+    let (grouped_msgs, count) =
+      consume_and_group(&in_streams, msg_collect_count, default_k_threshold).await?;
 
     if count == 0 {
       info!("No messages consumed");
@@ -152,7 +155,6 @@ pub async fn start_aggregation(
         db_pool.clone(),
         out_stream.clone(),
         grouped_msgs,
-        k_threshold,
         epoch_config.clone(),
         profiler.clone(),
       ));
