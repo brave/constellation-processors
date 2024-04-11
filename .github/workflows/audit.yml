@@ -20,7 +20,7 @@ jobs:
         uses: actions/checkout@b4ffde65f46336ab88eb53be808477a3936bae11 # v4.1.1
 
       - name: Audit server
-        run: cargo audit --deny warnings
+        run: cargo audit --deny warnings --ignore RUSTSEC-2022-0071 # includes exception for unmaintained rusoto crate, should be resolved by #134
 
       - name: Audit test client
         run: cargo audit --deny warnings
