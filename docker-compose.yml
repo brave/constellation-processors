@@ -5,7 +5,7 @@ networks:
 
 services:
   localstack:
-    image: localstack/localstack@sha256:2ad9d59fad4df84e348e4a0c0ce1e2e12526495b650b1ca2b723f7d6efcf3e7d
+    image: localstack/localstack@sha256:ba8aede2c2e4e6cc9bde3c19f1af0c805d34f7903f6bbf239bc54d4871b779a2
     ports:
       - 4510-4559:4510-4559
       - 4566:4566
