@@ -2,8 +2,10 @@ use super::{BatchInsert, DBConnection};
 use crate::models::PgStoreError;
 use crate::profiler::{Profiler, ProfilerStat};
 use crate::schema::pending_msgs;
+use crate::star::{parse_message, AppSTARError};
 use async_trait::async_trait;
 use diesel::{ExpressionMethods, QueryDsl, RunQueryDsl};
+use star_constellation::api::NestedMessage;
 use std::ops::DerefMut;
 use std::sync::{Arc, Mutex};
 use std::time::Instant;
@@ -15,6 +17,7 @@ pub struct PendingMessage {
   pub msg_tag: Vec<u8>,
   pub epoch_tag: i16,
   pub message: Vec<u8>,
+  pub threshold: i16,
 }
 
 #[derive(Insertable, Clone)]
@@ -23,6 +26,15 @@ pub struct NewPendingMessage {
   pub msg_tag: Vec<u8>,
   pub epoch_tag: i16,
   pub message: Vec<u8>,
+  pub threshold: i16,
+}
+
+impl TryInto<NestedMessage> for PendingMessage {
+  type Error = AppSTARError;
+
+  fn try_into(self) -> Result<NestedMessage, Self::Error> {
+    parse_message(&self.message)
+  }
 }
 
 impl PendingMessage {

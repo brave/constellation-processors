@@ -1,11 +1,11 @@
 use super::group::GroupedMessages;
 use super::AggregatorError;
-use crate::record_stream::RecordStreamArc;
+use crate::models::MessageWithThreshold;
+use crate::record_stream::{ConsumedRecord, RecordStreamArc};
 use crate::star::parse_message;
 use crate::util::parse_env_var;
 use futures::future::try_join_all;
 use futures::FutureExt;
-use star_constellation::api::NestedMessage;
 use std::sync::Arc;
 use std::time::Duration;
 use tokio::sync::mpsc::{self, UnboundedSender};
@@ -22,7 +22,7 @@ const RATE_CHECK_INTERVAL_SECS: u64 = 5;
 
 async fn run_recv_task(
   rec_stream: RecordStreamArc,
-  parsing_task_tx: mpsc::UnboundedSender<Vec<u8>>,
+  parsing_task_tx: mpsc::UnboundedSender<ConsumedRecord>,
   msg_count: Arc<Mutex<usize>>,
   msgs_to_collect_count: usize,
 ) -> Result<(), AggregatorError> {
@@ -87,7 +87,7 @@ async fn run_recv_task(
 fn create_recv_tasks(
   rec_streams: &Vec<RecordStreamArc>,
   parsing_tasks: &Vec<(
-    mpsc::UnboundedSender<Vec<u8>>,
+    mpsc::UnboundedSender<ConsumedRecord>,
     JoinHandle<Result<(), AggregatorError>>,
   )>,
   msg_count: Arc<Mutex<usize>>,
@@ -114,18 +114,24 @@ fn create_recv_tasks(
 
 fn create_parsing_tasks(
   task_count: usize,
-  parsed_tx: UnboundedSender<NestedMessage>,
+  parsed_tx: UnboundedSender<MessageWithThreshold>,
+  default_k_threshold: usize,
 ) -> Vec<(
-  mpsc::UnboundedSender<Vec<u8>>,
+  mpsc::UnboundedSender<ConsumedRecord>,
   JoinHandle<Result<(), AggregatorError>>,
 )> {
   (0..task_count)
     .map(|_| {
       let parsed_tx = parsed_tx.clone();
-      let (raw_tx, mut raw_rx) = mpsc::unbounded_channel::<Vec<u8>>();
+      let (raw_tx, mut raw_rx) = mpsc::unbounded_channel::<ConsumedRecord>();
       let task = tokio::spawn(async move {
-        while let Some(msg) = raw_rx.recv().await {
-          parsed_tx.send(parse_message(&msg)?).unwrap();
+        while let Some(record) = raw_rx.recv().await {
+          parsed_tx
+            .send(MessageWithThreshold {
+              msg: parse_message(&record.data)?,
+              threshold: record.request_threshold.unwrap_or(default_k_threshold),
+            })
+            .unwrap();
         }
         info!("Parsing task finished");
         Ok(())
@@ -138,13 +144,14 @@ fn create_parsing_tasks(
 pub async fn consume_and_group(
   rec_streams: &Vec<RecordStreamArc>,
   msgs_to_collect_count: usize,
+  default_k_threshold: usize,
 ) -> Result<(GroupedMessages, usize), AggregatorError> {
   let mut grouped_msgs = GroupedMessages::default();
 
-  let (parsed_tx, mut parsed_rx) = mpsc::unbounded_channel::<NestedMessage>();
+  let (parsed_tx, mut parsed_rx) = mpsc::unbounded_channel::<MessageWithThreshold>();
   let msg_count = Arc::new(Mutex::new(0));
 
-  let parsing_tasks = create_parsing_tasks(rec_streams.len(), parsed_tx);
+  let parsing_tasks = create_parsing_tasks(rec_streams.len(), parsed_tx, default_k_threshold);
   let recv_tasks = create_recv_tasks(
     rec_streams,
     &parsing_tasks,
@@ -178,11 +185,15 @@ mod tests {
   use star_constellation::api::SerializableNestedMessage;
   use star_constellation::randomness::testing::LocalFetcher;
 
+  const THRESHOLD: usize = 50;
+
   #[tokio::test]
   async fn consume_and_group_all() {
     let record_stream = prepare_record_stream().await;
 
-    let (grouped_msgs, count) = consume_and_group(&record_stream, 1024).await.unwrap();
+    let (grouped_msgs, count) = consume_and_group(&record_stream, 1024, THRESHOLD)
+      .await
+      .unwrap();
 
     assert_eq!(count, 7);
     assert_eq!(grouped_msgs.msg_chunks.get(&4).unwrap().len(), 1);
@@ -194,7 +205,9 @@ mod tests {
   async fn consume_and_group_some() {
     let record_stream = prepare_record_stream().await;
 
-    let (grouped_msgs, count) = consume_and_group(&record_stream, 3).await.unwrap();
+    let (grouped_msgs, count) = consume_and_group(&record_stream, 3, THRESHOLD)
+      .await
+      .unwrap();
 
     assert_eq!(count, 3);
     assert_eq!(grouped_msgs.msg_chunks.get(&4).unwrap().len(), 1);
