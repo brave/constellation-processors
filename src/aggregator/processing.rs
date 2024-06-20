@@ -83,7 +83,11 @@ fn get_recovery_key(
     rec_msg.key.clone()
   } else {
     let threshold = recovery_threshold.unwrap();
-    let new_msg_count = chunk.new_msgs.len();
+    let new_msg_count = chunk
+      .new_msgs
+      .get(&threshold)
+      .map(|nm| nm.len())
+      .unwrap_or_default();
 
     // drain messages required for recovery into the vec
     let mut msgs = drain_chunk_messages_for_threshold(chunk, threshold)?;

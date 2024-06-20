@@ -243,7 +243,12 @@ async fn send_request(client: &reqwest::Client, msg: String, cli_args: &CliArgs)
   if !cli_args.omit_threshold_header {
     builder = builder.header(THRESHOLD_HEADER_NAME, cli_args.threshold);
   }
-  builder.body(msg).send().await.unwrap();
+  let result = builder.body(msg).send().await.unwrap();
+  assert!(
+    result.status().is_success(),
+    "status is {}",
+    result.status()
+  );
 }
 
 async fn send_random_messages(cli_args: &CliArgs) {
