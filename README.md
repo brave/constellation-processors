@@ -60,6 +60,8 @@ The `--output-measurements-to-stdout` switch can be used to output measurements 
 | KAFKA_TLS_CERT_PATH | | No | Certificate path to use for Kafka TLS connections. |
 | KAFKA_TLS_KEY_PATH | | No | Key path to use for Kafka TLS connections. |
 | KAFKA_PRODUCE_QUEUE_TASK_COUNT | `64` | No | Amount of tasks to use for producing Kafka records. |
+| CHECK_SPOT_TERMINATION | `false` | No | Uses AWS IMDSv2 service to periodically check for spot termination warnings. In the event of an upcoming eviction, the check will ensure that the process terminates before committing to Kafka and the database to avoid potential data inconsistencies. |
+| IMDS_ENDPOINT | `http://169.254.169.254` | No | Endpoint to use for IMDSv2 requests. |
 
 #### Data channel settings
 
