@@ -3,7 +3,9 @@ mod group;
 mod processing;
 mod recovered;
 mod report;
+mod spot;
 
+use crate::aggregator::spot::check_spot_termination_status;
 use crate::epoch::EpochConfig;
 use crate::models::{
   begin_db_transaction, commit_db_transaction, DBConnectionType, DBPool, DBStorageConnections,
@@ -44,6 +46,8 @@ pub enum AggregatorError {
   Join(JoinError),
   JSONSerialize(serde_json::Error),
   ThresholdTooBig,
+  SpotTermination,
+  IMDSRequestFail,
 }
 
 fn create_output_stream(
@@ -68,6 +72,9 @@ fn create_output_stream(
 async fn wait_and_commit_producer(out_stream: &RecordStreamArc) -> Result<(), AggregatorError> {
   info!("Waiting for Kafka producer queues to finish...");
   out_stream.join_produce_queues().await?;
+
+  check_spot_termination_status(false).await?;
+
   info!("Committing Kafka output transaction");
   out_stream.commit_producer_transaction()?;
   Ok(())
@@ -160,7 +167,14 @@ pub async fn start_aggregation(
       ));
     }
 
-    let measurement_counts = try_join_all(tasks).await?;
+    let measurement_counts = tokio::select! {
+      measurement_counts_res = try_join_all(tasks) => {
+        measurement_counts_res?
+      },
+      termination_res = check_spot_termination_status(true) => {
+        return Err(termination_res.unwrap_err());
+      }
+    };
 
     let total_measurement_count = measurement_counts.iter().map(|(c, _)| c).sum::<i64>();
     let total_error_count = measurement_counts.iter().map(|(_, e)| e).sum::<usize>();
