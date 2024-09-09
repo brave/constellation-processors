@@ -39,7 +39,7 @@ services:
     networks:
       - star-agg
   kafka:
-    image: bitnami/kafka@sha256:864379e966cad4c2a37843a9c25f258df21250e70d6d1ce4ef6cfd88acb2205d
+    image: bitnami/kafka@sha256:999ba91863ef67e13c5704c3145154d0484671222dab2a603bfdeedc4a9fbad7
     ports:
       - 9092:9092
     environment:
