@@ -2,6 +2,7 @@ use super::group::{GroupedMessages, MessageChunk};
 use super::recovered::RecoveredMessages;
 use super::report::report_measurements;
 use super::AggregatorError;
+use crate::aggregator::spot::check_spot_termination_status;
 use crate::aggregator::wait_and_commit_producer;
 use crate::epoch::EpochConfig;
 use crate::models::{
@@ -9,7 +10,7 @@ use crate::models::{
   MessageWithThreshold, PendingMessage, RecoveredMessage,
 };
 use crate::profiler::{Profiler, ProfilerStat};
-use crate::record_stream::RecordStreamArc;
+use crate::record_stream::{DynRecordStream, RecordStreamArc};
 use crate::star::{recover_key, recover_msgs, AppSTARError, MsgRecoveryInfo};
 use star_constellation::api::NestedMessage;
 use star_constellation::Error as ConstellationError;
@@ -17,6 +18,32 @@ use std::collections::HashSet;
 use std::sync::{Arc, Mutex};
 use std::time::Instant;
 use tokio::task::JoinHandle;
+
+pub async fn process_expired_epoch(
+  conn: Arc<Mutex<DBConnection>>,
+  epoch_config: &EpochConfig,
+  out_stream: Option<&DynRecordStream>,
+  profiler: Arc<Profiler>,
+  epoch: i16,
+) -> Result<(), AggregatorError> {
+  let mut rec_msgs = RecoveredMessages::default();
+  rec_msgs
+    .fetch_all_recovered_with_nonzero_count(conn.clone(), epoch as u8, profiler.clone())
+    .await?;
+
+  report_measurements(
+    &mut rec_msgs,
+    epoch_config,
+    epoch as u8,
+    true,
+    out_stream,
+    profiler.clone(),
+  )
+  .await?;
+  RecoveredMessage::delete_epoch(conn.clone(), epoch, profiler.clone()).await?;
+  PendingMessage::delete_epoch(conn, epoch, profiler).await?;
+  Ok(())
+}
 
 pub async fn process_expired_epochs(
   conn: Arc<Mutex<DBConnection>>,
@@ -36,22 +63,14 @@ pub async fn process_expired_epochs(
     }
     begin_db_transaction(conn.clone())?;
 
-    let mut rec_msgs = RecoveredMessages::default();
-    rec_msgs
-      .fetch_all_recovered_with_nonzero_count(conn.clone(), epoch as u8, profiler.clone())
-      .await?;
-
-    report_measurements(
-      &mut rec_msgs,
-      epoch_config,
-      epoch as u8,
-      true,
-      out_stream.as_ref().map(|v| v.as_ref()),
-      profiler.clone(),
-    )
-    .await?;
-    RecoveredMessage::delete_epoch(conn.clone(), epoch, profiler.clone()).await?;
-    PendingMessage::delete_epoch(conn.clone(), epoch, profiler.clone()).await?;
+    tokio::select! {
+      res = process_expired_epoch(conn.clone(), epoch_config, out_stream.as_ref().map(|v| v.as_ref()), profiler.clone(), epoch) => {
+        res?
+      },
+      termination_res = check_spot_termination_status(true) => {
+        return Err(termination_res.unwrap_err());
+      }
+    };
 
     if let Some(out_stream) = out_stream.as_ref() {
       wait_and_commit_producer(out_stream).await?;
