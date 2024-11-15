@@ -7,10 +7,7 @@ mod spot;
 
 use crate::aggregator::spot::check_spot_termination_status;
 use crate::epoch::EpochConfig;
-use crate::models::{
-  begin_db_transaction, commit_db_transaction, DBConnectionType, DBPool, DBStorageConnections,
-  PgStoreError,
-};
+use crate::models::{DBConnectionType, DBPool, DBStorageConnections, PgStoreError};
 use crate::profiler::{Profiler, ProfilerStat};
 use crate::record_stream::{
   get_data_channel_topic_from_env, KafkaRecordStream, KafkaRecordStreamConfig, RecordStream,
@@ -211,24 +208,9 @@ pub async fn start_aggregation(
   // Delete pending/recovered messages from DB.
   info!("Checking/processing expired epochs");
   let profiler = Arc::new(Profiler::default());
-  let mut out_stream = create_output_stream(output_measurements_to_stdout, channel_name)?;
-  if let Some(out_stream) = out_stream.as_mut() {
-    out_stream.init_producer_queues().await;
-    out_stream.begin_producer_transaction()?;
-  }
+  let out_stream = create_output_stream(output_measurements_to_stdout, channel_name)?;
   let db_conn = Arc::new(Mutex::new(db_pool.get().await?));
-  begin_db_transaction(db_conn.clone())?;
-  process_expired_epochs(
-    db_conn.clone(),
-    &epoch_config,
-    out_stream.as_ref().map(|v| v.as_ref()),
-    profiler.clone(),
-  )
-  .await?;
-  if let Some(out_stream) = out_stream.as_ref() {
-    wait_and_commit_producer(out_stream).await?;
-  }
-  commit_db_transaction(db_conn)?;
+  process_expired_epochs(db_conn.clone(), &epoch_config, out_stream, profiler.clone()).await?;
   info!("Profiler summary:\n{}", profiler.summary().await);
 
   info!("Finished aggregation");

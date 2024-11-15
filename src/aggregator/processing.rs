@@ -2,13 +2,14 @@ use super::group::{GroupedMessages, MessageChunk};
 use super::recovered::RecoveredMessages;
 use super::report::report_measurements;
 use super::AggregatorError;
+use crate::aggregator::wait_and_commit_producer;
 use crate::epoch::EpochConfig;
 use crate::models::{
-  DBConnection, DBPool, DBStorageConnections, MessageWithThreshold, PendingMessage,
-  RecoveredMessage,
+  begin_db_transaction, commit_db_transaction, DBConnection, DBPool, DBStorageConnections,
+  MessageWithThreshold, PendingMessage, RecoveredMessage,
 };
 use crate::profiler::{Profiler, ProfilerStat};
-use crate::record_stream::{DynRecordStream, RecordStreamArc};
+use crate::record_stream::RecordStreamArc;
 use crate::star::{recover_key, recover_msgs, AppSTARError, MsgRecoveryInfo};
 use star_constellation::api::NestedMessage;
 use star_constellation::Error as ConstellationError;
@@ -20,7 +21,7 @@ use tokio::task::JoinHandle;
 pub async fn process_expired_epochs(
   conn: Arc<Mutex<DBConnection>>,
   epoch_config: &EpochConfig,
-  out_stream: Option<&DynRecordStream>,
+  out_stream: Option<RecordStreamArc>,
   profiler: Arc<Profiler>,
 ) -> Result<(), AggregatorError> {
   let epochs = RecoveredMessage::list_distinct_epochs(conn.clone()).await?;
@@ -29,6 +30,12 @@ pub async fn process_expired_epochs(
       continue;
     }
     info!("Detected expired epoch '{}', processing...", epoch);
+    if let Some(out_stream) = out_stream.as_ref() {
+      out_stream.init_producer_queues().await;
+      out_stream.begin_producer_transaction()?;
+    }
+    begin_db_transaction(conn.clone())?;
+
     let mut rec_msgs = RecoveredMessages::default();
     rec_msgs
       .fetch_all_recovered_with_nonzero_count(conn.clone(), epoch as u8, profiler.clone())
@@ -39,12 +46,17 @@ pub async fn process_expired_epochs(
       epoch_config,
       epoch as u8,
       true,
-      out_stream,
+      out_stream.as_ref().map(|v| v.as_ref()),
       profiler.clone(),
     )
     .await?;
     RecoveredMessage::delete_epoch(conn.clone(), epoch, profiler.clone()).await?;
     PendingMessage::delete_epoch(conn.clone(), epoch, profiler.clone()).await?;
+
+    if let Some(out_stream) = out_stream.as_ref() {
+      wait_and_commit_producer(out_stream).await?;
+    }
+    commit_db_transaction(conn.clone())?;
   }
   Ok(())
 }
