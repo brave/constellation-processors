@@ -16,7 +16,7 @@ use tokio::sync::Mutex;
 pub struct WebMetrics {
   total_requests: Family<TotalMetricLabels, Counter>,
   in_flight_requests: Family<InflightMetricLabels, Gauge>,
-  request_duration: Family<TotalMetricLabels, Histogram>,
+  request_duration: Family<RequestDurationLabels, Histogram>,
 }
 
 #[derive(Debug, Clone, Hash, PartialEq, Eq, EncodeLabelSet)]
@@ -27,6 +27,14 @@ pub struct InflightMetricLabels {
 
 #[derive(Debug, Clone, Hash, PartialEq, Eq, EncodeLabelSet)]
 pub struct TotalMetricLabels {
+  method: String,
+  path: String,
+  epoch: Option<u8>,
+  status: u16,
+}
+
+#[derive(Debug, Clone, Hash, PartialEq, Eq, EncodeLabelSet)]
+pub struct RequestDurationLabels {
   method: String,
   path: String,
   status: u16,
@@ -41,12 +49,27 @@ impl From<&ServiceRequest> for InflightMetricLabels {
   }
 }
 
-impl From<(&InflightMetricLabels, StatusCode)> for TotalMetricLabels {
-  fn from(value: (&InflightMetricLabels, StatusCode)) -> Self {
+impl TotalMetricLabels {
+  pub fn new(
+    inflight_labels: &InflightMetricLabels,
+    status: StatusCode,
+    epoch: Option<u8>,
+  ) -> Self {
     Self {
-      method: value.0.method.clone(),
-      path: value.0.path.clone(),
-      status: value.1.as_u16(),
+      method: inflight_labels.method.clone(),
+      path: inflight_labels.path.clone(),
+      epoch,
+      status: status.as_u16(),
+    }
+  }
+}
+
+impl RequestDurationLabels {
+  pub fn new(inflight_labels: &InflightMetricLabels, status: StatusCode) -> Self {
+    Self {
+      method: inflight_labels.method.clone(),
+      path: inflight_labels.path.clone(),
+      status: status.as_u16(),
     }
   }
 }
@@ -70,6 +93,7 @@ impl WebMetrics {
     &self,
     inflight_labels: &InflightMetricLabels,
     total_labels: &TotalMetricLabels,
+    duration_labels: &RequestDurationLabels,
     request_duration: Duration,
   ) {
     match total_labels.status == 404 {
@@ -81,7 +105,7 @@ impl WebMetrics {
         self.in_flight_requests.get_or_create(inflight_labels).dec();
         self
           .request_duration
-          .get_or_create(total_labels)
+          .get_or_create(duration_labels)
           .observe(request_duration.as_secs_f64());
         self.total_requests.get_or_create(total_labels).inc();
       }

@@ -1,13 +1,12 @@
 use crate::channel::get_data_channel_map_from_env;
 use crate::prometheus::{
-  create_metric_server, InflightMetricLabels, TotalMetricLabels, WebMetrics,
+  create_metric_server, InflightMetricLabels, RequestDurationLabels, TotalMetricLabels, WebMetrics,
 };
 use crate::record_stream::{
   get_data_channel_topic_map_from_env, KafkaRecordStream, KafkaRecordStreamConfig, RecordStream,
 };
 use crate::star::{parse_message, AppSTARError};
 use crate::util::parse_env_var;
-use actix_web::HttpRequest;
 use actix_web::{
   dev::Service,
   error::ResponseError,
@@ -17,6 +16,7 @@ use actix_web::{
   web::{self, Data},
   App, HttpResponse, HttpServer, Responder,
 };
+use actix_web::{HttpMessage, HttpRequest};
 use base64::{engine::general_purpose as base64_engine, Engine as _};
 use derive_more::{Display, Error, From};
 use futures::{future::try_join, FutureExt};
@@ -57,6 +57,8 @@ pub struct ServerState {
   pub min_revision_map: HashMap<String, usize>,
   pub request_threshold_range: RangeInclusive<usize>,
 }
+
+struct EpochExt(u8);
 
 impl ResponseError for WebError {
   fn error_response(&self) -> HttpResponse {
@@ -106,7 +108,7 @@ async fn handle_measurement_submit(
     Some(rec_stream) => {
       let body_str = from_utf8(&body)?.trim();
       let bincode_msg = base64_engine::STANDARD.decode(body_str)?;
-      parse_message(&bincode_msg)?;
+      let message = parse_message(&bincode_msg)?;
 
       if let Some(min_revision) = state.min_revision_map.get(channel_name) {
         let req_revision: usize =
@@ -128,7 +130,11 @@ async fn handle_measurement_submit(
           error!("Failed to push message: {}", e);
           Err(WebError::Internal)
         }
-        Ok(_) => Ok(HttpResponse::NoContent().finish()),
+        Ok(_) => {
+          let mut response = HttpResponse::NoContent();
+          response.extensions_mut().insert(EpochExt(message.epoch));
+          Ok(response.finish())
+        }
       }
     }
   }
@@ -219,14 +225,24 @@ pub async fn start_server(worker_count: usize, main_channel: String) -> std::io:
         let start_time = Instant::now();
 
         srv.call(request).map(move |result| {
-          let status_code = match result.as_ref() {
-            Ok(response) => response.status(),
-            Err(err) => err.as_response_error().status_code(),
+          let (epoch, status_code) = match result.as_ref() {
+            Ok(response) => (
+              response
+                .response()
+                .extensions()
+                .get::<EpochExt>()
+                .map(|ext| ext.0),
+              response.status(),
+            ),
+            Err(err) => (None, err.as_response_error().status_code()),
           };
-          let total_metric_labels = TotalMetricLabels::from((&inflight_metric_labels, status_code));
+          let total_metric_labels =
+            TotalMetricLabels::new(&inflight_metric_labels, status_code, epoch);
+          let duration_labels = RequestDurationLabels::new(&inflight_metric_labels, status_code);
           web_metrics.request_end(
             &inflight_metric_labels,
             &total_metric_labels,
+            &duration_labels,
             start_time.elapsed(),
           );
 
