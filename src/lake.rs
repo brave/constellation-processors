@@ -1,9 +1,6 @@
 use aws_sdk_s3::{
-  config::{http::HttpResponse, Region},
-  error::SdkError,
-  operation::put_object::PutObjectError,
-  primitives::ByteStream,
-  Client,
+  config::http::HttpResponse, error::SdkError, operation::put_object::PutObjectError,
+  primitives::ByteStream, Client,
 };
 use derive_more::{Display, Error, From};
 use rand::random;
@@ -27,19 +24,17 @@ pub struct DataLake {
 
 impl DataLake {
   pub async fn new() -> Self {
-    let region = Region::new("us-west-2");
-    let provider = aws_config::default_provider::credentials::DefaultCredentialsChain::builder()
-      .region(region.clone())
-      .build()
-      .await;
-    let endpoint = env::var(S3_ENDPOINT_ENV_VAR).unwrap_or_default();
-    let config = aws_sdk_s3::config::Builder::new()
-      .region(region)
-      .credentials_provider(provider)
-      .endpoint_url(endpoint)
-      .force_path_style(true)
-      .build();
-    let s3 = Client::from_conf(config);
+    let endpoint = env::var(S3_ENDPOINT_ENV_VAR).ok();
+    let aws_config = aws_config::from_env().load().await;
+    let mut s3_config_builder = aws_sdk_s3::config::Builder::from(&aws_config);
+    if let Some(endpoint) = endpoint {
+      s3_config_builder = s3_config_builder
+        .endpoint_url(endpoint)
+        .force_path_style(true);
+    }
+    let s3_config = s3_config_builder.build();
+
+    let s3 = Client::from_conf(s3_config);
 
     Self {
       s3,
@@ -62,7 +57,7 @@ impl DataLake {
       .put_object()
       .acl(aws_sdk_s3::types::ObjectCannedAcl::BucketOwnerFullControl)
       .body(ByteStream::from(contents))
-      .bucket(self.bucket_name.clone())
+      .bucket(&self.bucket_name)
       .key(full_key)
       .send()
       .await?;
