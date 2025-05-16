@@ -26,7 +26,7 @@ jobs:
           args: --force cargo-audit
 
       - name: Audit server
-        run: cargo audit --deny warnings --ignore RUSTSEC-2022-0071 # includes exception for unmaintained rusoto crate, should be resolved by #134
+        run: cargo audit --deny warnings
 
       - name: Audit test client
         run: cargo audit --deny warnings

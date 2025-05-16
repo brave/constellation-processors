@@ -1,44 +1,40 @@
+use aws_sdk_s3::{
+  config::http::HttpResponse, error::SdkError, operation::put_object::PutObjectError,
+  primitives::ByteStream, Client,
+};
 use derive_more::{Display, Error, From};
 use rand::random;
-use rusoto_core::{ByteStream, Region, RusotoError};
-use rusoto_s3::{PutObjectError, PutObjectRequest, S3Client, S3};
 use std::env;
 use time::OffsetDateTime;
 
 const S3_ENDPOINT_ENV_VAR: &str = "S3_ENDPOINT";
 const OUTPUT_S3_BUCKET_ENV_KEY: &str = "S3_OUTPUT_BUCKET";
-const WEB_IDENTITY_ENV_VAR: &str = "AWS_WEB_IDENTITY_TOKEN_FILE";
 const DEFAULT_OUTPUT_BUCKET_NAME: &str = "p3a-star-recovered";
 
 #[derive(From, Error, Display, Debug)]
 pub enum DataLakeError {
   #[display(fmt = "Upload error: {}", _0)]
-  Upload(RusotoError<PutObjectError>),
+  Upload(SdkError<PutObjectError, HttpResponse>),
 }
 
 pub struct DataLake {
-  s3: S3Client,
+  s3: Client,
   bucket_name: String,
 }
 
 impl DataLake {
-  pub fn new() -> Self {
-    let region = match env::var(S3_ENDPOINT_ENV_VAR) {
-      Ok(endpoint) => Region::Custom {
-        name: "us-west-2".to_string(),
-        endpoint,
-      },
-      Err(_) => Default::default(),
-    };
-    let s3 = if env::var(WEB_IDENTITY_ENV_VAR).is_ok() {
-      let provider = rusoto_credential::AutoRefreshingProvider::new(
-        rusoto_sts::WebIdentityProvider::from_k8s_env(),
-      )
-      .unwrap();
-      S3Client::new_with(rusoto_core::HttpClient::new().unwrap(), provider, region)
-    } else {
-      S3Client::new(region)
-    };
+  pub async fn new() -> Self {
+    let endpoint = env::var(S3_ENDPOINT_ENV_VAR).ok();
+    let aws_config = aws_config::from_env().load().await;
+    let mut s3_config_builder = aws_sdk_s3::config::Builder::from(&aws_config);
+    if let Some(endpoint) = endpoint {
+      s3_config_builder = s3_config_builder
+        .endpoint_url(endpoint)
+        .force_path_style(true);
+    }
+    let s3_config = s3_config_builder.build();
+
+    let s3 = Client::from_conf(s3_config);
 
     Self {
       s3,
@@ -58,13 +54,12 @@ impl DataLake {
     let contents = contents.as_bytes().to_vec();
     self
       .s3
-      .put_object(PutObjectRequest {
-        acl: Some("bucket-owner-full-control".to_string()),
-        body: Some(ByteStream::from(contents)),
-        bucket: self.bucket_name.clone(),
-        key: full_key,
-        ..Default::default()
-      })
+      .put_object()
+      .acl(aws_sdk_s3::types::ObjectCannedAcl::BucketOwnerFullControl)
+      .body(ByteStream::from(contents))
+      .bucket(&self.bucket_name)
+      .key(full_key)
+      .send()
       .await?;
     Ok(())
   }

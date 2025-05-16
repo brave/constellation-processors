@@ -63,7 +63,7 @@ pub async fn start_lakesink(
   let lake = if output_measurements_to_stdout {
     None
   } else {
-    Some(DataLake::new())
+    Some(DataLake::new().await)
   };
   let mut batch = Vec::with_capacity(batch_size);
   let batch_timeout = Duration::from_secs(BATCH_TIMEOUT_SECS);
