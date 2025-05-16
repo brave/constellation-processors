@@ -13,7 +13,7 @@ use tokio_util::sync::CancellationToken;
 
 const BATCH_SIZE_ENV_KEY: &str = "LAKE_SINK_BATCH_SIZE";
 const BATCH_SIZE_DEFAULT: &str = "1000";
-const BATCH_TIMEOUT_SECS: u64 = 45;
+const BATCH_TIMEOUT_SECS: u64 = 10;
 
 #[derive(Error, From, Display, Debug)]
 #[display(fmt = "Lake sink error: {}")]
