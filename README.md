@@ -31,8 +31,8 @@ Run `cargo run` with the desired arguments. If the aggregator is run, database m
 
 #### Running aggregation/sinking/viewing results
 
-1. Run data lake sink: `cargo run -- -l`
-2. Run the aggregator, with a test current epoch value (usually the current epoch is fetched from the randomness server directly): `cargo run -- -a --test-epoch 1`
+1. Run the aggregator, with a test current epoch value (usually the current epoch is fetched from the randomness server directly): `cargo run -- -a --test-epoch 1`
+2. Run data lake sink: `cargo run -- -l`
 3. Use [awscli-local](https://github.com/localstack/awscli-local) to list and copy the jsonl files from the `p3a-star-recovered` bucket.
 
 #### Outputting measurements to stdout
