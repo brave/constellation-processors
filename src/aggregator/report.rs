@@ -139,6 +139,8 @@ pub async fn report_measurements(
 
 #[cfg(test)]
 mod tests {
+  use std::sync::Mutex;
+
   use calendar_duration::CalendarDuration;
   use serde_json::json;
   use time::OffsetDateTime;
@@ -151,7 +153,7 @@ mod tests {
   fn test_epoch_config(epoch: u8) -> EpochConfig {
     let epoch_length = CalendarDuration::from("1w");
     EpochConfig {
-      current_epoch: CurrentEpochInfo::test_info(epoch, epoch_length),
+      current_epoch_info: Mutex::new(CurrentEpochInfo::test_info(epoch, epoch_length)),
       epoch_date_field_name: "wos".to_string(),
       epoch_length,
       epoch_lifetime_count: 3,

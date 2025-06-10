@@ -1,6 +1,6 @@
 use calendar_duration::CalendarDuration;
 use serde::Deserialize;
-use std::env;
+use std::{env, sync::Mutex};
 use time::OffsetDateTime;
 
 use crate::channel::get_data_channel_value_from_env;
@@ -26,9 +26,9 @@ const DEFAULT_EPOCH_DATE_FIELD_NAMES: &str = "typical=wos";
 #[serde(rename_all = "camelCase")]
 pub struct CurrentEpochInfo {
   #[serde(rename = "currentEpoch")]
-  pub epoch: u8,
+  epoch: u8,
   #[serde(deserialize_with = "time::serde::rfc3339::deserialize")]
-  pub next_epoch_time: OffsetDateTime,
+  next_epoch_time: OffsetDateTime,
 }
 
 impl CurrentEpochInfo {
@@ -61,6 +61,19 @@ impl CurrentEpochInfo {
       .expect("should be able to parse info json from randomness server")
   }
 
+  fn update(&mut self, epoch_duration: CalendarDuration) {
+    let now = OffsetDateTime::now_utc();
+    while now >= self.next_epoch_time {
+      let new_epoch = self.epoch.wrapping_add(1);
+      debug!(
+        "Updating current epoch from {} to {}",
+        self.epoch, new_epoch
+      );
+      self.epoch = new_epoch;
+      self.next_epoch_time = self.next_epoch_time + epoch_duration;
+    }
+  }
+
   pub fn test_info(test_epoch: u8, epoch_duration: CalendarDuration) -> Self {
     Self {
       epoch: test_epoch,
@@ -70,7 +83,7 @@ impl CurrentEpochInfo {
 }
 
 pub struct EpochConfig {
-  pub current_epoch: CurrentEpochInfo,
+  pub current_epoch_info: Mutex<CurrentEpochInfo>,
   pub epoch_date_field_name: String,
   pub epoch_length: CalendarDuration,
   pub epoch_lifetime_count: usize,
@@ -103,7 +116,7 @@ impl EpochConfig {
       None => CurrentEpochInfo::retrieve(channel_name).await,
     };
     Self {
-      current_epoch,
+      current_epoch_info: Mutex::new(current_epoch),
       epoch_date_field_name,
       epoch_length,
       epoch_lifetime_count,
@@ -111,8 +124,13 @@ impl EpochConfig {
   }
 
   pub fn is_epoch_expired(&self, epoch: u8) -> bool {
+    let mut current_epoch = {
+      let mut current_epoch_info = self.current_epoch_info.lock().unwrap();
+      current_epoch_info.update(self.epoch_length);
+      current_epoch_info.epoch
+    };
+
     let mut diff = 0;
-    let mut current_epoch = self.current_epoch.epoch;
     if !(FIRST_EPOCH..=LAST_EPOCH).contains(&current_epoch) {
       return true;
     }
@@ -128,9 +146,20 @@ impl EpochConfig {
     diff >= self.epoch_lifetime_count
   }
 
+  pub fn current_epoch(&self) -> u8 {
+    let mut current_epoch_info = self.current_epoch_info.lock().unwrap();
+    current_epoch_info.update(self.epoch_length);
+    current_epoch_info.epoch
+  }
+
   pub fn get_epoch_survey_date(&self, epoch: u8) -> String {
-    let current_epoch_start = self.current_epoch.next_epoch_time - self.epoch_length;
-    let epoch_delta = self.current_epoch.epoch.wrapping_sub(epoch);
+    let (next_epoch_time, current_epoch) = {
+      let mut current_epoch_info = self.current_epoch_info.lock().unwrap();
+      current_epoch_info.update(self.epoch_length);
+      (current_epoch_info.next_epoch_time, current_epoch_info.epoch)
+    };
+    let current_epoch_start = next_epoch_time - self.epoch_length;
+    let epoch_delta = current_epoch.wrapping_sub(epoch);
 
     let mut epoch_start_date = current_epoch_start;
     for _ in 0..epoch_delta {
@@ -142,34 +171,96 @@ impl EpochConfig {
 
 #[cfg(test)]
 mod tests {
+  use std::sync::Mutex;
+
   use super::{CurrentEpochInfo, EpochConfig};
   use calendar_duration::CalendarDuration;
-  use time::{format_description::well_known::Rfc3339, OffsetDateTime};
+  use time::OffsetDateTime;
 
   fn get_epoch_config() -> EpochConfig {
     let epoch_length = CalendarDuration::from("1w");
     EpochConfig {
-      current_epoch: CurrentEpochInfo {
+      current_epoch_info: Mutex::new(CurrentEpochInfo {
         epoch: 2,
-        next_epoch_time: OffsetDateTime::parse("2023-05-08T13:00:00.000Z", &Rfc3339)
-          .unwrap()
-          .into(),
-      },
+        next_epoch_time: OffsetDateTime::now_utc() + epoch_length,
+      }),
       epoch_date_field_name: "wos".to_string(),
       epoch_length,
       epoch_lifetime_count: 5,
     }
   }
 
+  fn get_expected_epoch_date(date_time: OffsetDateTime, offset: CalendarDuration) -> String {
+    let date = date_time - offset;
+    date.date().to_string()
+  }
+
+  #[test]
+  fn current_epoch() {
+    let epoch_config = get_epoch_config();
+
+    assert_eq!(epoch_config.current_epoch(), 2);
+  }
+
+  #[test]
+  fn epoch_update_current_epoch() {
+    let epoch_config = get_epoch_config();
+    let now = OffsetDateTime::now_utc();
+    {
+      let mut current_epoch_info = epoch_config.current_epoch_info.lock().unwrap();
+      current_epoch_info.next_epoch_time = now - CalendarDuration::from("2w");
+      current_epoch_info.epoch = 255;
+    }
+
+    assert_eq!(epoch_config.current_epoch(), 2);
+    assert_eq!(
+      epoch_config
+        .current_epoch_info
+        .lock()
+        .unwrap()
+        .next_epoch_time,
+      now + CalendarDuration::from("1w")
+    );
+
+    assert_eq!(
+      epoch_config.get_epoch_survey_date(255),
+      get_expected_epoch_date(now, CalendarDuration::from("3w"))
+    );
+    assert_eq!(
+      epoch_config.get_epoch_survey_date(2),
+      now.date().to_string()
+    );
+  }
+
   #[test]
   fn survey_date() {
     let epoch_config = get_epoch_config();
+    let next_epoch_time = epoch_config
+      .current_epoch_info
+      .lock()
+      .unwrap()
+      .next_epoch_time;
 
-    assert_eq!(epoch_config.get_epoch_survey_date(2), "2023-05-01");
-    assert_eq!(epoch_config.get_epoch_survey_date(1), "2023-04-24");
-    assert_eq!(epoch_config.get_epoch_survey_date(0), "2023-04-17");
-    assert_eq!(epoch_config.get_epoch_survey_date(255), "2023-04-10");
-    assert_eq!(epoch_config.get_epoch_survey_date(254), "2023-04-03");
+    assert_eq!(
+      epoch_config.get_epoch_survey_date(2),
+      get_expected_epoch_date(next_epoch_time, CalendarDuration::from("1w"))
+    );
+    assert_eq!(
+      epoch_config.get_epoch_survey_date(1),
+      get_expected_epoch_date(next_epoch_time, CalendarDuration::from("2w"))
+    );
+    assert_eq!(
+      epoch_config.get_epoch_survey_date(0),
+      get_expected_epoch_date(next_epoch_time, CalendarDuration::from("3w"))
+    );
+    assert_eq!(
+      epoch_config.get_epoch_survey_date(255),
+      get_expected_epoch_date(next_epoch_time, CalendarDuration::from("4w"))
+    );
+    assert_eq!(
+      epoch_config.get_epoch_survey_date(254),
+      get_expected_epoch_date(next_epoch_time, CalendarDuration::from("5w"))
+    );
   }
 
   #[test]

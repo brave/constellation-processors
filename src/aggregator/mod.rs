@@ -85,7 +85,7 @@ pub async fn start_aggregation(
   output_measurements_to_stdout: bool,
   epoch_config: Arc<EpochConfig>,
 ) -> Result<(), AggregatorError> {
-  info!("Current epoch is {}", epoch_config.current_epoch.epoch);
+  info!("Current epoch is {}", epoch_config.current_epoch());
 
   let default_k_threshold =
     parse_env_var::<usize>(DEFAULT_K_THRESHOLD_ENV_KEY, DEFAULT_K_THRESHOLD_DEFAULT);
