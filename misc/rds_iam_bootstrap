@@ -25,6 +25,8 @@ DATABASE_PASSWORD="$(aws rds generate-db-auth-token \
 
 export DATABASE_URL="postgres://$DATABASE_USER:$DATABASE_PASSWORD@$DATABASE_HOST"
 
+unset AWS_ACCESS_KEY_ID AWS_SECRET_ACCESS_KEY AWS_SESSION_TOKEN
+
 constellation-processors $@
 
 get_auth_token
