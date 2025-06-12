@@ -4,6 +4,7 @@ mod epoch;
 mod lake;
 mod lakesink;
 mod models;
+mod msk_iam;
 mod profiler;
 mod prometheus;
 mod record_stream;

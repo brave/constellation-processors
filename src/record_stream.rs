@@ -2,7 +2,7 @@ use async_trait::async_trait;
 use derive_more::{Display, Error, From};
 use futures::future::try_join_all;
 use rand::{seq::SliceRandom, thread_rng};
-use rdkafka::client::ClientContext;
+use rdkafka::client::{ClientContext, OAuthToken};
 use rdkafka::config::ClientConfig;
 use rdkafka::consumer::{
   stream_consumer::StreamConsumer, CommitMode, Consumer, ConsumerContext, Rebalance,
@@ -14,7 +14,8 @@ use rdkafka::types::RDKafkaErrorCode;
 use rdkafka::TopicPartitionList;
 use std::collections::HashMap;
 use std::env;
-use std::sync::Arc;
+use std::error::Error as StdError;
+use std::sync::{Arc, Mutex as StdMutex};
 use std::time::Duration;
 use tokio::sync::mpsc::{error::SendError, unbounded_channel, UnboundedSender};
 use tokio::sync::{Mutex, RwLock};
@@ -22,12 +23,14 @@ use tokio::task::{JoinError, JoinHandle};
 use tokio::time::sleep;
 
 use crate::channel::{get_data_channel_map_from_env, get_data_channel_value_from_env};
+use crate::msk_iam::MSKIAMAuthManager;
 use crate::util::parse_env_var;
 
 const KAFKA_ENC_TOPICS_ENV_KEY: &str = "KAFKA_ENCRYPTED_TOPICS";
 const KAFKA_OUT_TOPICS_ENV_KEY: &str = "KAFKA_OUTPUT_TOPICS";
 const DEFAULT_ENC_KAFKA_TOPICS: &str = "typical=p3a-star-enc";
 const DEFAULT_OUT_KAFKA_TOPICS: &str = "typical=p3a-star-out";
+const KAFKA_IAM_BROKERS_ENV_KEY: &str = "KAFKA_IAM_BROKERS";
 const KAFKA_BROKERS_ENV_KEY: &str = "KAFKA_BROKERS";
 const KAFKA_ENABLE_PLAINTEXT_ENV_KEY: &str = "KAFKA_ENABLE_PLAINTEXT";
 const KAFKA_PRODUCER_QUEUE_TASK_COUNT_ENV_KEY: &str = "KAFKA_PRODUCE_QUEUE_TASK_COUNT";
@@ -54,9 +57,31 @@ pub enum RecordStreamError {
   Join(JoinError),
 }
 
-struct KafkaContext;
+#[derive(Clone)]
+struct KafkaContext {
+  msk_iam_auth_manager: Arc<StdMutex<MSKIAMAuthManager>>,
+}
 
-impl ClientContext for KafkaContext {}
+impl ClientContext for KafkaContext {
+  const ENABLE_REFRESH_OAUTH_TOKEN: bool = true;
+
+  fn generate_oauth_token(
+    &self,
+    _oauthbearer_config: Option<&str>,
+  ) -> Result<OAuthToken, Box<dyn StdError>> {
+    let token_info = self
+      .msk_iam_auth_manager
+      .lock()
+      .unwrap()
+      .get_auth_token()
+      .map_err(|e| e.to_string())?;
+    Ok(OAuthToken {
+      token: token_info.token,
+      lifetime_ms: (token_info.expiration_time.unix_timestamp_nanos() / 1_000_000) as i64,
+      principal_name: String::new(),
+    })
+  }
+}
 
 impl ConsumerContext for KafkaContext {
   fn pre_rebalance(&self, rebalance: &Rebalance) {
@@ -115,6 +140,25 @@ pub struct KafkaRecordStreamConfig {
   pub use_output_group_id: bool,
 }
 
+pub struct KafkaRecordStreamFactory {
+  msk_iam_auth_manager: Arc<StdMutex<MSKIAMAuthManager>>,
+}
+
+impl KafkaRecordStreamFactory {
+  pub fn new() -> Self {
+    Self {
+      msk_iam_auth_manager: Arc::new(StdMutex::new(MSKIAMAuthManager::new())),
+    }
+  }
+
+  pub fn create_record_stream(&self, stream_config: KafkaRecordStreamConfig) -> KafkaRecordStream {
+    let context = KafkaContext {
+      msk_iam_auth_manager: self.msk_iam_auth_manager.clone(),
+    };
+    KafkaRecordStream::new(stream_config, context)
+  }
+}
+
 pub struct KafkaRecordStream {
   producer: Option<Arc<FutureProducer<KafkaContext>>>,
   consumer: Option<StreamConsumer<KafkaContext>>,
@@ -150,7 +194,7 @@ pub fn get_data_channel_topic_from_env(use_output_topic: bool, channel_name: &st
 }
 
 impl KafkaRecordStream {
-  pub fn new(stream_config: KafkaRecordStreamConfig) -> Self {
+  fn new(stream_config: KafkaRecordStreamConfig, context: KafkaContext) -> Self {
     let group_id = match stream_config.use_output_group_id {
       true => "star-agg-dec",
       false => "star-agg-enc",
@@ -163,7 +207,6 @@ impl KafkaRecordStream {
       producer_queues: RwLock::new(Vec::new()),
     };
     if stream_config.enable_producer {
-      let context = KafkaContext;
       let mut config = Self::new_client_config();
       let mut config_ref = &mut config;
       if stream_config.use_output_group_id {
@@ -175,13 +218,12 @@ impl KafkaRecordStream {
           .set("transaction.timeout.ms", "3600000")
           .set("request.timeout.ms", "900000")
           .set("socket.timeout.ms", "300000")
-          .create_with_context(context)
+          .create_with_context(context.clone())
           .unwrap(),
       ));
       info!("Producing to topic: {}", stream_config.topic);
     }
     if stream_config.enable_consumer {
-      let context = KafkaContext;
       let mut config = Self::new_client_config();
       result.consumer = Some(
         config
@@ -210,6 +252,13 @@ impl KafkaRecordStream {
   }
 
   fn new_client_config() -> ClientConfig {
+    if let Some(brokers) = env::var(KAFKA_IAM_BROKERS_ENV_KEY).ok() {
+      let mut result = ClientConfig::new();
+      result.set("bootstrap.servers", brokers);
+      result.set("security.protocol", "SASL_SSL");
+      result.set("sasl.mechanism", "OAUTHBEARER");
+      return result;
+    }
     let brokers = env::var(KAFKA_BROKERS_ENV_KEY)
       .unwrap_or_else(|_| panic!("{} env var must be defined", KAFKA_BROKERS_ENV_KEY));
     let mut result = ClientConfig::new();

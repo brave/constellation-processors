@@ -3,10 +3,12 @@ use crate::prometheus::{
   create_metric_server, InflightMetricLabels, RequestDurationLabels, TotalMetricLabels, WebMetrics,
 };
 use crate::record_stream::{
-  get_data_channel_topic_map_from_env, KafkaRecordStream, KafkaRecordStreamConfig, RecordStream,
+  get_data_channel_topic_map_from_env, KafkaRecordStream, KafkaRecordStreamConfig,
+  KafkaRecordStreamFactory, RecordStream,
 };
 use crate::star::{parse_message, AppSTARError};
 use crate::util::parse_env_var;
+use actix_web::HttpRequest;
 use actix_web::{
   dev::Service,
   error::ResponseError,
@@ -16,7 +18,6 @@ use actix_web::{
   web::{self, Data},
   App, HttpResponse, HttpServer, Responder,
 };
-use actix_web::{HttpMessage, HttpRequest};
 use base64::{engine::general_purpose as base64_engine, Engine as _};
 use derive_more::{Display, Error, From};
 use futures::{future::try_join, FutureExt};
@@ -160,12 +161,13 @@ async fn main_handler(
 }
 
 pub async fn start_server(worker_count: usize, main_channel: String) -> std::io::Result<()> {
+  let rec_stream_factory = KafkaRecordStreamFactory::new();
   let channel_rec_streams = get_data_channel_topic_map_from_env(false)
     .into_iter()
     .map(|(channel_name, topic)| {
       (
         channel_name,
-        KafkaRecordStream::new(KafkaRecordStreamConfig {
+        rec_stream_factory.create_record_stream(KafkaRecordStreamConfig {
           enable_producer: true,
           enable_consumer: false,
           topic,

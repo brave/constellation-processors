@@ -10,7 +10,7 @@ use crate::epoch::EpochConfig;
 use crate::models::{DBConnectionType, DBPool, DBStorageConnections, PgStoreError};
 use crate::profiler::{Profiler, ProfilerStat};
 use crate::record_stream::{
-  get_data_channel_topic_from_env, KafkaRecordStream, KafkaRecordStreamConfig, RecordStream,
+  get_data_channel_topic_from_env, KafkaRecordStreamConfig, KafkaRecordStreamFactory, RecordStream,
   RecordStreamArc, RecordStreamError,
 };
 use crate::star::AppSTARError;
@@ -48,6 +48,7 @@ pub enum AggregatorError {
 }
 
 fn create_output_stream(
+  rec_stream_factory: &KafkaRecordStreamFactory,
   output_measurements_to_stdout: bool,
   channel_name: &str,
 ) -> Result<Option<RecordStreamArc>, AggregatorError> {
@@ -55,12 +56,14 @@ fn create_output_stream(
   Ok(if output_measurements_to_stdout {
     None
   } else {
-    let out_stream = Arc::new(KafkaRecordStream::new(KafkaRecordStreamConfig {
-      enable_producer: true,
-      enable_consumer: false,
-      topic,
-      use_output_group_id: true,
-    }));
+    let out_stream = Arc::new(
+      rec_stream_factory.create_record_stream(KafkaRecordStreamConfig {
+        enable_producer: true,
+        enable_consumer: false,
+        topic,
+        use_output_group_id: true,
+      }),
+    );
     out_stream.init_producer_transactions()?;
     Some(out_stream)
   })
@@ -96,17 +99,24 @@ pub async fn start_aggregation(
 
   info!("Starting aggregation...");
 
-  let out_stream = create_output_stream(output_measurements_to_stdout, channel_name)?;
+  let rec_stream_factory = KafkaRecordStreamFactory::new();
+  let out_stream = create_output_stream(
+    &rec_stream_factory,
+    output_measurements_to_stdout,
+    channel_name,
+  )?;
 
   let mut in_streams: Vec<RecordStreamArc> = Vec::new();
   let in_stream_topic = get_data_channel_topic_from_env(false, channel_name);
   for _ in 0..CONSUMER_COUNT {
-    in_streams.push(Arc::new(KafkaRecordStream::new(KafkaRecordStreamConfig {
-      enable_producer: false,
-      enable_consumer: true,
-      topic: in_stream_topic.clone(),
-      use_output_group_id: false,
-    })));
+    in_streams.push(Arc::new(rec_stream_factory.create_record_stream(
+      KafkaRecordStreamConfig {
+        enable_producer: false,
+        enable_consumer: true,
+        topic: in_stream_topic.clone(),
+        use_output_group_id: false,
+      },
+    )));
   }
 
   for i in 0..iterations {
@@ -208,7 +218,11 @@ pub async fn start_aggregation(
   // Delete pending/recovered messages from DB.
   info!("Checking/processing expired epochs");
   let profiler = Arc::new(Profiler::default());
-  let out_stream = create_output_stream(output_measurements_to_stdout, channel_name)?;
+  let out_stream = create_output_stream(
+    &rec_stream_factory,
+    output_measurements_to_stdout,
+    channel_name,
+  )?;
   let db_conn = Arc::new(Mutex::new(db_pool.get().await?));
   process_expired_epochs(db_conn.clone(), &epoch_config, out_stream, profiler.clone()).await?;
   info!("Profiler summary:\n{}", profiler.summary().await);
