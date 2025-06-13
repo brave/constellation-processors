@@ -11,7 +11,7 @@ use std::{
   time::{Duration as StdDuration, SystemTime},
 };
 use time::{macros::format_description, Duration, UtcDateTime};
-use tokio::runtime::Handle;
+use tokio::runtime::Runtime;
 use url::Url;
 
 const ACTION_TYPE: &str = "Action";
@@ -33,15 +33,11 @@ pub struct TokenInfo {
 }
 pub struct MSKIAMAuthManager {
   token_info: Option<TokenInfo>,
-  runtime_handle: Handle,
 }
 
 impl MSKIAMAuthManager {
   pub fn new() -> Self {
-    Self {
-      token_info: None,
-      runtime_handle: Handle::current(),
-    }
+    Self { token_info: None }
   }
 
   pub fn get_auth_token(&mut self) -> IAMResult<TokenInfo> {
@@ -51,10 +47,13 @@ impl MSKIAMAuthManager {
       }
     }
 
-    let handle = self.runtime_handle.clone();
-    let token_info = thread::spawn(move || handle.block_on(generate_auth_token_async()))
-      .join()
-      .unwrap()?;
+    let token_info = thread::spawn(|| {
+      Runtime::new()
+        .unwrap()
+        .block_on(generate_auth_token_async())
+    })
+    .join()
+    .unwrap()?;
     self.token_info = Some(token_info.clone());
     Ok(token_info)
   }
