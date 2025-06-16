@@ -1050,7 +1050,9 @@ dependencies = [
  "actix-web",
  "async-trait",
  "aws-config",
+ "aws-credential-types",
  "aws-sdk-s3",
+ "aws-sigv4",
  "base64 0.21.7",
  "bincode",
  "calendar-duration",
@@ -1078,6 +1080,7 @@ dependencies = [
  "time",
  "tokio",
  "tokio-util",
+ "url",
 ]
 
 [[package]]
