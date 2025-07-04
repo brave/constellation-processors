@@ -281,13 +281,16 @@ impl KafkaRecordStream {
   }
 
   pub async fn get_total_kafka_lag(&self) -> Result<usize, RecordStreamError> {
-    let consumer = self.consumer.as_ref().ok_or(RecordStreamError::ProducerNotPresent)?;
-    
+    let consumer = self
+      .consumer
+      .as_ref()
+      .ok_or(RecordStreamError::ProducerNotPresent)?;
+
     // Get metadata for the topic to find all partitions
     let metadata = consumer
       .fetch_metadata(Some(&self.topic), Duration::from_secs(10))
       .map_err(RecordStreamError::from)?;
-    
+
     let topic_metadata = metadata
       .topics()
       .iter()
@@ -300,19 +303,19 @@ impl KafkaRecordStream {
 
     for partition in topic_metadata.partitions() {
       let partition_id = partition.id();
-      
+
       // Get high watermark for this partition
       let (_, high_watermark) = consumer
         .fetch_watermarks(&self.topic, partition_id, Duration::from_secs(10))
         .map_err(RecordStreamError::from)?;
-      
+
       // Get committed offset for this partition
       let mut tpl = TopicPartitionList::new();
       tpl.add_partition(&self.topic, partition_id);
       let committed_offsets = consumer
         .committed_offsets(tpl, Duration::from_secs(10))
         .map_err(RecordStreamError::from)?;
-      
+
       let committed_offset = committed_offsets
         .elements()
         .iter()
@@ -320,10 +323,10 @@ impl KafkaRecordStream {
         .and_then(|elem| elem.offset().to_raw())
         .unwrap_or(0) // If no commit, assume starting from beginning
         .max(0); // Treat any negative offset as 0
-      
+
       // Calculate lag for this partition
       let partition_lag = high_watermark - committed_offset;
-      
+
       total_lag += partition_lag as usize; // Ensure non-negative
     }
 

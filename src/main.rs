@@ -12,6 +12,7 @@ mod record_stream;
 mod scheduler;
 mod schema;
 mod server;
+mod slack;
 mod star;
 mod util;
 
@@ -177,10 +178,7 @@ async fn main() {
     let scheduler = Scheduler::new()
       .await
       .expect("Failed to initialize scheduler");
-    scheduler
-      .run()
-      .await
-      .expect("Scheduler failed");
+    scheduler.run().await.expect("Scheduler failed");
   } else if cli_args.server {
     start_server(cli_args.server_worker_count, cli_args.main_channel_name)
       .await

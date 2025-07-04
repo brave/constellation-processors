@@ -18,22 +18,22 @@ impl RDSManager {
   pub async fn load() -> Option<Self> {
     let role_arn = env::var(RDS_MANAGEMENT_ROLE_ENV_KEY).ok()?;
     let cluster_id = env::var(RDS_CLUSTER_ID_ENV_KEY).ok()?;
-    
+
     let config = aws_config::from_env().load().await;
     let provider = AssumeRoleProvider::builder(&role_arn)
       .session_name(SESSION_NAME)
       .configure(&config)
       .build()
       .await;
-    
+
     // Create new config with assumed role credentials
     let rds_config = aws_config::from_env()
       .credentials_provider(provider)
       .load()
       .await;
-    
+
     let rds_client = RdsClient::new(&rds_config);
-    
+
     Some(RDSManager {
       cluster_id,
       rds_client,
@@ -47,13 +47,14 @@ impl RDSManager {
     }
 
     info!("Starting RDS cluster: {}", self.cluster_id);
-    
-    self.rds_client
+
+    self
+      .rds_client
       .start_db_cluster()
       .db_cluster_identifier(&self.cluster_id)
       .send()
       .await?;
-    
+
     self.cached_running_status = Some(true);
     info!("Successfully started RDS cluster: {}", self.cluster_id);
     Ok(())
@@ -65,13 +66,14 @@ impl RDSManager {
     }
 
     info!("Stopping RDS cluster: {}", self.cluster_id);
-    
-    self.rds_client
+
+    self
+      .rds_client
       .stop_db_cluster()
       .db_cluster_identifier(&self.cluster_id)
       .send()
       .await?;
-    
+
     self.cached_running_status = Some(false);
     info!("Successfully stopped RDS cluster: {}", self.cluster_id);
     Ok(())
@@ -82,16 +84,17 @@ impl RDSManager {
       return Ok(cached_status);
     }
 
-    let response = self.rds_client
+    let response = self
+      .rds_client
       .describe_db_clusters()
       .db_cluster_identifier(&self.cluster_id)
       .send()
       .await?;
-    
+
     let response_clusters = response.db_clusters();
 
     if response_clusters.is_empty() {
-        return Ok(false);
+      return Ok(false);
     }
     self.cached_running_status = Some(response_clusters[0].status().unwrap() == "available");
     Ok(self.cached_running_status.unwrap())

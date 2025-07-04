@@ -1,5 +1,8 @@
 use reqwest::{Client, StatusCode};
-use std::time::{Duration, Instant};
+use std::{
+  env,
+  time::{Duration, Instant},
+};
 
 use crate::util::parse_env_var;
 
@@ -9,6 +12,7 @@ const IMDS_ENDPOINT_ENV_KEY: &str = "IMDS_ENDPOINT";
 const DEFAULT_IMDS_ENDPOINT: &str = "http://169.254.169.254";
 const CHECK_SPOT_TERMINATION_ENV_KEY: &str = "CHECK_SPOT_TERMINATION";
 const DEFAULT_CHECK_SPOT_TERMINATION: &str = "false";
+const SPOT_EVICTION_ENDPOINT_ENV_KEY: &str = "SPOT_EVICTION_ENDPOINT";
 
 const IMDS_CHECK_INTERVAL: Duration = Duration::from_secs(30);
 const IMDS_REQUEST_TIMEOUT: Duration = Duration::from_secs(5);
@@ -53,7 +57,10 @@ async fn get_imds_token(client: &Client, endpoint: &str) -> Result<String, Aggre
   }
 }
 
-pub async fn check_spot_termination_status(loop_enabled: bool) -> Result<(), AggregatorError> {
+pub async fn check_spot_termination_status(
+  loop_enabled: bool,
+  channel_name: &str,
+) -> Result<(), AggregatorError> {
   let check_enabled: bool = parse_env_var(
     CHECK_SPOT_TERMINATION_ENV_KEY,
     DEFAULT_CHECK_SPOT_TERMINATION,
@@ -86,6 +93,14 @@ pub async fn check_spot_termination_status(loop_enabled: bool) -> Result<(), Agg
         Ok(response) => {
           if response.status().is_success() {
             warn!("Spot instance scheduled for termination, stopping");
+
+            // Send request to eviction endpoint if configured
+            if let Some(eviction_url) = env::var(SPOT_EVICTION_ENDPOINT_ENV_KEY).ok() {
+              let eviction_url = format!("{}/{}", eviction_url, channel_name);
+              info!("Sending spot eviction notification to: {}", eviction_url);
+              let _ = client.post(eviction_url).send().await;
+            }
+
             return Err(AggregatorError::SpotTermination);
           } else if response.status() != StatusCode::NOT_FOUND {
             error!(
