@@ -8,7 +8,7 @@ use kube::{
   Client, Config,
 };
 use log::{error, info};
-use rand::Rng;
+
 use std::time::Duration as StdDuration;
 
 use std::{
@@ -39,24 +39,33 @@ const DEFAULT_CRONJOB_NAMES: &str = "typical=aggregator-typical";
 const SCHEDULER_KAFKA_LAG_THRESHOLDS_ENV_KEY: &str = "SCHEDULER_KAFKA_LAG_THRESHOLDS";
 const DEFAULT_SCHEDULER_KAFKA_LAG_THRESHOLDS: &str = "typical=100000000";
 
-const SCHEDULER_MAX_TIME_BETWEEN_JOBS_ENV_KEY: &str = "SCHEDULER_MAX_TIME_BETWEEN_JOBS";
-const DEFAULT_SCHEDULER_MAX_TIME_BETWEEN_JOBS: &str = "typical=3d";
+const SCHEDULER_MIN_TIME_BETWEEN_JOBS_ENV_KEY: &str = "SCHEDULER_MIN_TIME_BETWEEN_JOBS";
+const DEFAULT_SCHEDULER_MIN_TIME_BETWEEN_JOBS: &str = "typical=3d";
+
+const BACKOFF_BASE_DELAY: Duration = Duration::minutes(1);
+const BACKOFF_MAX_DELAY: Duration = Duration::hours(12);
+
+const JOB_IMMINENT_THRESHOLD: Duration = Duration::minutes(30);
 
 struct JobState {
   last_job_id: Option<String>,
-  schedule_delay: Duration,
+  retry_count: u32,
   scheduled_at: Option<OffsetDateTime>,
   last_job_success_time: Option<OffsetDateTime>,
+}
+
+struct ChannelInfo {
+  kafka_lag_threshold: usize,
+  min_time_between_jobs: CalendarDuration,
+  cronjob_name: String,
+  record_stream: KafkaRecordStream,
 }
 
 pub struct Scheduler {
   kube_client: Client,
   job_states: Arc<Mutex<HashMap<String, JobState>>>,
   job_namespace: String,
-  record_streams: HashMap<String, KafkaRecordStream>,
-  kafka_lag_thresholds: HashMap<String, usize>,
-  cronjob_names: HashMap<String, String>,
-  max_time_between_jobs: HashMap<String, CalendarDuration>,
+  channels: HashMap<String, ChannelInfo>,
   rds_manager: Option<RDSManager>,
   slack_client: Arc<SlackClient>,
 }
@@ -80,10 +89,39 @@ async fn start_eviction_server(
   Ok(())
 }
 
-fn generate_schedule_delay() -> Duration {
-  let mut rng = rand::thread_rng();
-  let random_hours = rng.gen_range(1..=12);
-  Duration::hours(random_hours)
+async fn schedule_job_with_backoff(
+  state: &mut JobState,
+  channel_name: &str,
+  is_eviction: bool,
+  slack_client: &SlackClient,
+) {
+  // Exponential backoff: start at 1 minute, double on each retry, cap at 12 hours
+  let delay = (BACKOFF_BASE_DELAY * (2_u32.pow(state.retry_count))).min(BACKOFF_MAX_DELAY);
+
+  state.retry_count += 1;
+  state.scheduled_at = Some(OffsetDateTime::now_utc() + delay);
+  state.last_job_id = None;
+
+  let message = if is_eviction {
+    format!(
+      "⚠️ Job for channel '{}' received spot eviction. Will run after {}.",
+      channel_name,
+      delay.to_string()
+    )
+  } else {
+    format!(
+      "🚨 Job for channel '{}' failed. Will retry after {}.",
+      channel_name,
+      delay.to_string()
+    )
+  };
+
+  info!("{}", message);
+
+  // Send Slack notification
+  if let Err(e) = slack_client.send_message(&message).await {
+    error!("Failed to send Slack notification: {:?}", e);
+  }
 }
 
 fn get_job_name_prefix(channel_name: &str) -> String {
@@ -98,32 +136,15 @@ async fn handle_eviction(
   let channel = path.into_inner();
 
   let mut states = job_states.lock().unwrap();
-  if let Some(state) = states.get_mut(&channel) {
-    // Set random duration between 3 and 12 hours
-    state.schedule_delay = generate_schedule_delay();
-    state.scheduled_at = Some(OffsetDateTime::now_utc());
-    state.last_job_id = None;
+  let mut resp = if let Some(state) = states.get_mut(&channel) {
+    schedule_job_with_backoff(state, &channel, true, slack_client.as_ref()).await;
 
-    info!(
-      "Channel {} evicted, will run after {} hours from now",
-      channel,
-      state.schedule_delay.whole_hours()
-    );
-
-    // Send Slack notification for eviction
-    let message = format!(
-      "⚠️ Job for channel '{}' received spot eviction. Job will run after {} hours from now.",
-      channel,
-      state.schedule_delay.whole_hours()
-    );
-    if let Err(e) = slack_client.send_message(&message).await {
-      error!("Failed to send Slack notification for eviction: {:?}", e);
-    }
-
-    Ok(HttpResponse::NoContent().finish())
+    HttpResponse::NoContent()
   } else {
-    Ok(HttpResponse::NotFound().finish())
-  }
+    HttpResponse::NotFound()
+  };
+
+  Ok(resp.finish())
 }
 
 impl Scheduler {
@@ -148,89 +169,35 @@ impl Scheduler {
 
     let topic_map = get_data_channel_topic_map_from_env(false);
 
-    let mut job_states = HashMap::new();
+    let job_states = topic_map
+      .keys()
+      .map(|channel_name| {
+        (
+          channel_name.clone(),
+          JobState {
+            last_job_id: None,
+            retry_count: 0,
+            scheduled_at: None,
+            last_job_success_time: None,
+          },
+        )
+      })
+      .collect();
 
-    for channel_name in topic_map.keys() {
-      job_states.insert(
-        channel_name.clone(),
-        JobState {
-          last_job_id: None,
-          schedule_delay: Duration::ZERO,
-          scheduled_at: None,
-          last_job_success_time: None,
-        },
-      );
-    }
-
-    // Parse kafka lag thresholds
     let threshold_map = get_data_channel_map_from_env(
       SCHEDULER_KAFKA_LAG_THRESHOLDS_ENV_KEY,
       DEFAULT_SCHEDULER_KAFKA_LAG_THRESHOLDS,
     );
 
-    let kafka_lag_thresholds: HashMap<String, usize> = threshold_map
-      .into_iter()
-      .map(|(channel_name, threshold_str)| {
-        threshold_str
-          .parse::<usize>()
-          .map_err(|_| {
-            anyhow!(
-              "Failed to parse threshold '{}' for channel '{}'",
-              threshold_str,
-              channel_name
-            )
-          })
-          .map(|threshold| (channel_name, threshold))
-      })
-      .collect::<Result<HashMap<_, _>, _>>()?;
-
-    // Parse cronjob names
     let cronjob_names = get_data_channel_map_from_env(CRONJOB_NAMES_ENV_KEY, DEFAULT_CRONJOB_NAMES);
 
-    // Parse max time between jobs
-    let max_time_map = get_data_channel_map_from_env(
-      SCHEDULER_MAX_TIME_BETWEEN_JOBS_ENV_KEY,
-      DEFAULT_SCHEDULER_MAX_TIME_BETWEEN_JOBS,
+    let min_time_map = get_data_channel_map_from_env(
+      SCHEDULER_MIN_TIME_BETWEEN_JOBS_ENV_KEY,
+      DEFAULT_SCHEDULER_MIN_TIME_BETWEEN_JOBS,
     );
 
-    let max_time_between_jobs: HashMap<String, CalendarDuration> = max_time_map
-      .into_iter()
-      .map(|(channel_name, duration_str)| {
-        let duration = CalendarDuration::from(duration_str.as_str());
-        if duration.is_zero() {
-          return Err(anyhow!(
-            "Failed to parse max time between jobs for channel {}",
-            channel_name
-          ));
-        }
-        Ok((channel_name, duration))
-      })
-      .collect::<Result<HashMap<_, _>, _>>()?;
-
-    // Verify all channels have thresholds, cronjobs, and max times defined
-    for channel_name in topic_map.keys() {
-      if !kafka_lag_thresholds.contains_key(channel_name) {
-        return Err(anyhow!(
-          "No Kafka lag threshold defined for channel '{}'",
-          channel_name
-        ));
-      }
-      if !cronjob_names.contains_key(channel_name) {
-        return Err(anyhow!(
-          "No cronjob name defined for channel '{}'",
-          channel_name
-        ));
-      }
-      if !max_time_between_jobs.contains_key(channel_name) {
-        return Err(anyhow!(
-          "No max time between jobs defined for channel '{}'",
-          channel_name
-        ));
-      }
-    }
-
     let factory = KafkaRecordStreamFactory::new();
-    let mut record_streams = HashMap::new();
+    let mut channels = HashMap::new();
 
     for (channel_name, topic_name) in topic_map.iter() {
       let stream_config = KafkaRecordStreamConfig {
@@ -240,7 +207,48 @@ impl Scheduler {
         use_output_group_id: false,
       };
       let record_stream = factory.create_record_stream(stream_config);
-      record_streams.insert(channel_name.clone(), record_stream);
+
+      let threshold_str = threshold_map.get(channel_name).ok_or_else(|| {
+        anyhow!(
+          "No Kafka lag threshold defined for channel '{}'",
+          channel_name
+        )
+      })?;
+      let kafka_lag_threshold = threshold_str.parse::<usize>().map_err(|_| {
+        anyhow!(
+          "Failed to parse threshold '{}' for channel '{}'",
+          threshold_str,
+          channel_name
+        )
+      })?;
+
+      let duration_str = min_time_map.get(channel_name).ok_or_else(|| {
+        anyhow!(
+          "No min time between jobs defined for channel '{}'",
+          channel_name
+        )
+      })?;
+      let min_time_between_jobs = CalendarDuration::from(duration_str.as_str());
+      if min_time_between_jobs.is_zero() {
+        return Err(anyhow!(
+          "Failed to parse min time between jobs for channel {}",
+          channel_name
+        ));
+      }
+
+      let cronjob_name = cronjob_names
+        .get(channel_name)
+        .ok_or_else(|| anyhow!("No cronjob name defined for channel '{}'", channel_name))?
+        .clone();
+
+      let channel_info = ChannelInfo {
+        kafka_lag_threshold,
+        min_time_between_jobs,
+        cronjob_name,
+        record_stream,
+      };
+
+      channels.insert(channel_name.clone(), channel_info);
     }
 
     let rds_manager = RDSManager::load().await;
@@ -258,10 +266,7 @@ impl Scheduler {
       job_states: Arc::new(Mutex::new(job_states)),
       job_namespace: env::var(JOB_NAMESPACE_ENV_KEY)
         .unwrap_or_else(|_| DEFAULT_JOB_NAMESPACE.to_string()),
-      record_streams,
-      kafka_lag_thresholds,
-      cronjob_names,
-      max_time_between_jobs,
+      channels,
       rds_manager,
       slack_client: Arc::new(SlackClient::new()),
     };
@@ -359,32 +364,13 @@ impl Scheduler {
         // Set success time only if job completed without failures
         if !job_failed {
           state.last_job_success_time = Some(OffsetDateTime::now_utc());
+          state.retry_count = 0;
           info!(
             "Job {} completed successfully for channel {}",
             last_job_id, channel_name
           );
         } else {
-          // Backoff by random duration
-          state.schedule_delay = generate_schedule_delay();
-          state.scheduled_at = Some(OffsetDateTime::now_utc());
-
-          info!(
-            "Job {} failed for channel {}, will retry after {} hours",
-            last_job_id,
-            channel_name,
-            state.schedule_delay.whole_hours()
-          );
-
-          // Send Slack notification for job failure
-          let message = format!(
-            "🚨 Job failed: {} for channel '{}'. Will retry after {} hours.",
-            last_job_id,
-            channel_name,
-            state.schedule_delay.whole_hours()
-          );
-          if let Err(e) = self.slack_client.send_message(&message).await {
-            error!("Failed to send Slack notification for job failure: {:?}", e);
-          }
+          schedule_job_with_backoff(state, channel_name, false, &self.slack_client).await;
         }
       }
     }
@@ -395,22 +381,25 @@ impl Scheduler {
     if state.scheduled_at.is_some() {
       return Ok(());
     }
-    let record_stream = self.record_streams.get(channel_name).unwrap();
-    let threshold = self.kafka_lag_thresholds.get(channel_name).unwrap();
+    let channel_info = self.channels.get(channel_name).unwrap();
 
-    let total_lag = record_stream.get_total_kafka_lag().await.map_err(|e| {
-      anyhow!(
-        "Failed to get kafka lag for channel {}: {:?}",
-        channel_name,
-        e
-      )
-    })?;
+    let total_lag = channel_info
+      .record_stream
+      .get_total_kafka_lag()
+      .await
+      .map_err(|e| {
+        anyhow!(
+          "Failed to get kafka lag for channel {}: {:?}",
+          channel_name,
+          e
+        )
+      })?;
 
-    if total_lag >= *threshold {
+    if total_lag >= channel_info.kafka_lag_threshold {
       state.scheduled_at = Some(OffsetDateTime::now_utc());
       info!(
         "Kafka lag threshold exceeded for channel {}: {} >= {}",
-        channel_name, total_lag, threshold
+        channel_name, total_lag, channel_info.kafka_lag_threshold
       );
     }
     Ok(())
@@ -419,17 +408,17 @@ impl Scheduler {
   async fn scheduler_loop(&mut self) -> Result<()> {
     loop {
       // Collect channels that should run jobs
-      let (jobs_active, channels_to_run) = {
+      let (jobs_active_or_imminent, channels_to_run) = {
         let mut states = self.job_states.lock().unwrap();
 
         self.check_and_update_job_statuses(&mut states).await?;
 
-        let mut jobs_active = false;
+        let mut jobs_active_or_imminent = false;
         let mut channels_to_run = Vec::new();
 
         for (channel_name, state) in states.iter_mut() {
           if state.last_job_id.is_some() {
-            jobs_active = true;
+            jobs_active_or_imminent = true;
             continue;
           }
 
@@ -439,21 +428,26 @@ impl Scheduler {
 
           // Check if enough time has passed since last successful job
           if let Some(last_success) = state.last_job_success_time {
-            let max_time = self
-              .max_time_between_jobs
+            let min_time = self
+              .channels
               .get(channel_name)
               .unwrap()
+              .min_time_between_jobs
               .clone();
-            let lockout_expiry = last_success + max_time;
+            let lockout_expiry = last_success + min_time;
             if now < lockout_expiry {
               continue; // Not enough time has passed since last success
             }
           }
 
           // Check if we should run a job for this channel
-          if let Some(kafka_lag_set_at) = state.scheduled_at {
-            // Check if enough time has passed since kafka lag threshold was set
-            if now - kafka_lag_set_at < state.schedule_delay {
+          if let Some(scheduled_at) = state.scheduled_at {
+            // Check if enough time has passed since job was scheduled
+            let time_until_job_start = scheduled_at - now;
+            if time_until_job_start < JOB_IMMINENT_THRESHOLD {
+              jobs_active_or_imminent = true;
+            }
+            if time_until_job_start >= Duration::ZERO {
               continue;
             }
           } else {
@@ -465,15 +459,14 @@ impl Scheduler {
             continue;
           }
 
-          jobs_active = true;
           channels_to_run.push(channel_name.clone());
         }
 
-        (jobs_active, channels_to_run)
+        (jobs_active_or_imminent, channels_to_run)
       };
 
       if let Some(rds_manager) = &mut self.rds_manager {
-        if jobs_active {
+        if jobs_active_or_imminent {
           rds_manager.start().await?;
         } else {
           rds_manager.stop().await?;
@@ -481,7 +474,11 @@ impl Scheduler {
       } else {
         debug!(
           "RDS management is disabled, skipping database {}",
-          if jobs_active { "start" } else { "stop" }
+          if jobs_active_or_imminent {
+            "start"
+          } else {
+            "stop"
+          }
         );
       }
 
@@ -506,7 +503,7 @@ impl Scheduler {
     let job_name_prefix = get_job_name_prefix(channel_name);
 
     // Get the cronjob name for this channel
-    let cronjob_name = self.cronjob_names.get(channel_name).unwrap();
+    let cronjob_name = &self.channels.get(channel_name).unwrap().cronjob_name;
 
     // Fetch the source CronJob
     let source_cronjob = cronjobs.get(&cronjob_name).await?;
@@ -553,7 +550,6 @@ impl Scheduler {
 
     state.last_job_id = Some(job_name.clone());
     state.scheduled_at = None;
-    state.schedule_delay = Duration::ZERO;
 
     Ok(())
   }
