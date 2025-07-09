@@ -7,6 +7,7 @@ Includes:
 - Server: for collecting messages protected by Constellation/STAR
 - Aggregator: for decrypting message data deemed recoverable
 - Data lake sink: for storage of decrypted message data
+- Scheduler: schedules aggregator tasks depending on Kafka stream lag, handles backoff during spot compute evictions
 
 ## Data flow
 
