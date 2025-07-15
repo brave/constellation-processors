@@ -69,11 +69,14 @@ fn create_output_stream(
   })
 }
 
-async fn wait_and_commit_producer(out_stream: &RecordStreamArc) -> Result<(), AggregatorError> {
+async fn wait_and_commit_producer(
+  out_stream: &RecordStreamArc,
+  channel_name: &str,
+) -> Result<(), AggregatorError> {
   info!("Waiting for Kafka producer queues to finish...");
   out_stream.join_produce_queues().await?;
 
-  check_spot_termination_status(false).await?;
+  check_spot_termination_status(false, channel_name).await?;
 
   info!("Committing Kafka output transaction");
   out_stream.commit_producer_transaction()?;
@@ -178,7 +181,7 @@ pub async fn start_aggregation(
       measurement_counts_res = try_join_all(tasks) => {
         measurement_counts_res?
       },
-      termination_res = check_spot_termination_status(true) => {
+      termination_res = check_spot_termination_status(true, channel_name) => {
         return Err(termination_res.unwrap_err());
       }
     };
@@ -187,7 +190,7 @@ pub async fn start_aggregation(
     let total_error_count = measurement_counts.iter().map(|(_, e)| e).sum::<usize>();
 
     if let Some(out_stream) = out_stream.as_ref() {
-      wait_and_commit_producer(out_stream).await?;
+      wait_and_commit_producer(out_stream, channel_name).await?;
     }
 
     info!("Committing DB transactions");
@@ -224,7 +227,14 @@ pub async fn start_aggregation(
     channel_name,
   )?;
   let db_conn = Arc::new(Mutex::new(db_pool.get().await?));
-  process_expired_epochs(db_conn.clone(), &epoch_config, out_stream, profiler.clone()).await?;
+  process_expired_epochs(
+    db_conn.clone(),
+    &epoch_config,
+    out_stream,
+    profiler.clone(),
+    channel_name,
+  )
+  .await?;
   info!("Profiler summary:\n{}", profiler.summary().await);
 
   info!("Finished aggregation");

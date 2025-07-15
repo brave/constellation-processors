@@ -50,6 +50,7 @@ pub async fn process_expired_epochs(
   epoch_config: &EpochConfig,
   out_stream: Option<RecordStreamArc>,
   profiler: Arc<Profiler>,
+  channel_name: &str,
 ) -> Result<(), AggregatorError> {
   let epochs = RecoveredMessage::list_distinct_epochs(conn.clone()).await?;
   for epoch in epochs {
@@ -67,13 +68,13 @@ pub async fn process_expired_epochs(
       res = process_expired_epoch(conn.clone(), epoch_config, out_stream.as_ref().map(|v| v.as_ref()), profiler.clone(), epoch) => {
         res?
       },
-      termination_res = check_spot_termination_status(true) => {
+      termination_res = check_spot_termination_status(true, channel_name) => {
         return Err(termination_res.unwrap_err());
       }
     };
 
     if let Some(out_stream) = out_stream.as_ref() {
-      wait_and_commit_producer(out_stream).await?;
+      wait_and_commit_producer(out_stream, channel_name).await?;
     }
     commit_db_transaction(conn.clone())?;
   }

@@ -7,6 +7,7 @@ Includes:
 - Server: for collecting messages protected by Constellation/STAR
 - Aggregator: for decrypting message data deemed recoverable
 - Data lake sink: for storage of decrypted message data
+- Scheduler: schedules aggregator tasks depending on Kafka stream lag, handles backoff during spot compute evictions
 
 ## Data flow
 
@@ -62,6 +63,15 @@ The `--output-measurements-to-stdout` switch can be used to output measurements 
 | KAFKA_PRODUCE_QUEUE_TASK_COUNT | `64` | No | Amount of tasks to use for producing Kafka records. |
 | CHECK_SPOT_TERMINATION | `false` | No | Uses AWS IMDSv2 service to periodically check for spot termination warnings. In the event of an upcoming eviction, the check will ensure that the process terminates before committing to Kafka and the database to avoid potential data inconsistencies. |
 | IMDS_ENDPOINT | `http://169.254.169.254` | No | Endpoint to use for IMDSv2 requests. |
+| RDS_MANAGEMENT_ROLE | | No | ARN of the IAM role for RDS management operations. |
+| RDS_CLUSTER_ID | | No | ID of the RDS cluster to start/stop during job scheduling. |
+| JOB_NAMESPACE | `star-staging` | No | Kubernetes namespace for job scheduling. |
+| JOB_KUBERNETES_CONTEXT | | No | Kubernetes context to use for job scheduling. |
+| CRONJOB_NAMES | `typical=aggregator-typical` | No | Mapping of channel names to Kubernetes cron job names. |
+| SCHEDULER_KAFKA_LAG_THRESHOLDS | `typical=100000000` | No | Kafka lag thresholds for triggering job scheduling per channel. |
+| SCHEDULER_MIN_TIME_BETWEEN_JOBS | `typical=3d` | No | Minimum time between successful job executions per channel. |
+| SLACK_AUTH_TOKEN | | No | Slack authentication token for notifications. |
+| SLACK_CHANNEL | | No | Slack channel for sending notifications. |
 
 #### Data channel settings
 

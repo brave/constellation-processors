@@ -7,9 +7,12 @@ mod models;
 mod msk_iam;
 mod profiler;
 mod prometheus;
+mod rds;
 mod record_stream;
+mod scheduler;
 mod schema;
 mod server;
+mod slack;
 mod star;
 mod util;
 
@@ -24,6 +27,7 @@ use lakesink::start_lakesink;
 use prometheus::{create_metric_server, DataLakeMetrics};
 use prometheus_client::registry::Registry;
 use record_stream::get_data_channel_topic_map_from_env;
+use scheduler::Scheduler;
 use server::start_server;
 use std::env;
 use std::process;
@@ -49,7 +53,7 @@ const SENTRY_DSN_ENV_KEY: &str = "SENTRY_DSN";
     ArgGroup::new("process-mode")
       .required(true)
       .multiple(true)
-      .args(&["aggregator", "lake_sink", "server"])
+      .args(&["aggregator", "lake_sink", "server", "scheduler"])
 ))]
 struct CliArgs {
   #[clap(short, long, help = "Enable server mode")]
@@ -60,6 +64,9 @@ struct CliArgs {
 
   #[clap(short, long, help = "Enable aggregator mode")]
   aggregator: bool,
+
+  #[clap(long, help = "Enable scheduler mode")]
+  scheduler: bool,
 
   #[clap(
     short = 'c',
@@ -166,7 +173,13 @@ async fn main() {
     return;
   }
 
-  if cli_args.server {
+  if cli_args.scheduler {
+    info!("Starting scheduler");
+    let scheduler = Scheduler::new()
+      .await
+      .expect("Failed to initialize scheduler");
+    scheduler.run().await.expect("Scheduler failed");
+  } else if cli_args.server {
     start_server(cli_args.server_worker_count, cli_args.main_channel_name)
       .await
       .unwrap();
