@@ -5,13 +5,13 @@ use rand::{seq::SliceRandom, thread_rng};
 use rdkafka::client::{ClientContext, OAuthToken};
 use rdkafka::config::ClientConfig;
 use rdkafka::consumer::{
-  stream_consumer::StreamConsumer, CommitMode, Consumer, ConsumerContext, Rebalance,
+  BaseConsumer, CommitMode, Consumer, ConsumerContext, Rebalance, StreamConsumer,
 };
 use rdkafka::error::{KafkaError, KafkaResult};
 use rdkafka::message::{Header, Headers, Message, OwnedHeaders};
 use rdkafka::producer::{future_producer::FutureProducer, FutureRecord, Producer};
 use rdkafka::types::RDKafkaErrorCode;
-use rdkafka::TopicPartitionList;
+use rdkafka::{Offset, TopicPartitionList};
 use std::collections::HashMap;
 use std::env;
 use std::error::Error as StdError;
@@ -52,6 +52,7 @@ pub enum RecordStreamError {
   Kafka(KafkaError),
   Deserialize,
   ProducerNotPresent,
+  LagCheckerNotPresent,
   TestConsumeTimeout,
   MpscSendError(SendError<Vec<u8>>),
   Join(JoinError),
@@ -84,11 +85,11 @@ impl ClientContext for KafkaContext {
 }
 
 impl ConsumerContext for KafkaContext {
-  fn pre_rebalance(&self, rebalance: &Rebalance) {
+  fn pre_rebalance(&self, _consumer: &BaseConsumer<Self>, rebalance: &Rebalance) {
     info!("Kafka: rebalancing: {:?}", rebalance);
   }
 
-  fn post_rebalance(&self, _rebalance: &Rebalance) {
+  fn post_rebalance(&self, _consumer: &BaseConsumer<Self>, _rebalance: &Rebalance) {
     info!("Kafka: rebalance complete");
   }
 
@@ -157,6 +158,17 @@ impl KafkaRecordStreamFactory {
     };
     KafkaRecordStream::new(stream_config, context)
   }
+
+  pub fn create_lag_checker(
+    &self,
+    use_output_group_id: bool,
+    topic: String,
+  ) -> Result<KafkaLagChecker, RecordStreamError> {
+    let context = KafkaContext {
+      msk_iam_auth_manager: self.msk_iam_auth_manager.clone(),
+    };
+    KafkaLagChecker::new(use_output_group_id, topic, context)
+  }
 }
 
 pub struct KafkaRecordStream {
@@ -193,101 +205,73 @@ pub fn get_data_channel_topic_from_env(use_output_topic: bool, channel_name: &st
   }
 }
 
-impl KafkaRecordStream {
-  fn new(stream_config: KafkaRecordStreamConfig, context: KafkaContext) -> Self {
-    let group_id = match stream_config.use_output_group_id {
-      true => "star-agg-dec",
-      false => "star-agg-enc",
-    };
-
-    let mut result = Self {
-      producer: None,
-      consumer: None,
-      topic: stream_config.topic.clone(),
-      producer_queues: RwLock::new(Vec::new()),
-    };
-    if stream_config.enable_producer {
-      let mut config = Self::new_client_config();
-      let mut config_ref = &mut config;
-      if stream_config.use_output_group_id {
-        config_ref = config_ref.set("transactional.id", "main");
-      }
-      result.producer = Some(Arc::new(
-        config_ref
-          .set("message.timeout.ms", "3600000")
-          .set("transaction.timeout.ms", "3600000")
-          .set("request.timeout.ms", "900000")
-          .set("socket.timeout.ms", "300000")
-          .create_with_context(context.clone())
-          .unwrap(),
-      ));
-      info!("Producing to topic: {}", stream_config.topic);
-    }
-    if stream_config.enable_consumer {
-      let mut config = Self::new_client_config();
-      result.consumer = Some(
-        config
-          .set("group.id", group_id)
-          .set("enable.auto.commit", "false")
-          .set("session.timeout.ms", "21000")
-          .set("max.poll.interval.ms", "14400000")
-          .set("auto.offset.reset", "earliest")
-          .set("queued.max.messages.kbytes", "300000")
-          .create_with_context(context)
-          .unwrap(),
-      );
-      info!(
-        "Consuming from topic: {} (current offsets: {:?})",
-        stream_config.topic,
-        result.consumer.as_ref().unwrap().position().unwrap()
-      );
-      result
-        .consumer
-        .as_ref()
-        .unwrap()
-        .subscribe(&[&stream_config.topic])
-        .unwrap();
-    }
-    result
-  }
-
-  fn new_client_config() -> ClientConfig {
-    if let Some(brokers) = env::var(KAFKA_IAM_BROKERS_ENV_KEY).ok() {
-      let mut result = ClientConfig::new();
-      result.set("bootstrap.servers", brokers);
-      result.set("security.protocol", "SASL_SSL");
-      result.set("sasl.mechanism", "OAUTHBEARER");
-      return result;
-    }
-    let brokers = env::var(KAFKA_BROKERS_ENV_KEY)
-      .unwrap_or_else(|_| panic!("{} env var must be defined", KAFKA_BROKERS_ENV_KEY));
+fn new_client_config() -> ClientConfig {
+  if let Some(brokers) = env::var(KAFKA_IAM_BROKERS_ENV_KEY).ok() {
     let mut result = ClientConfig::new();
     result.set("bootstrap.servers", brokers);
-    if env::var(KAFKA_ENABLE_PLAINTEXT_ENV_KEY).unwrap_or_default() == "true" {
-      result.set("security.protocol", "plaintext");
-    }
-    if let Ok(cert_path) = env::var(KAFKA_TLS_CERT_PATH_ENV_KEY) {
-      result
-        .set("security.protocol", "ssl")
-        .set("ssl.certificate.location", cert_path);
-    }
-    if let Ok(cert_path) = env::var(KAFKA_TLS_CA_CERT_PATH_ENV_KEY) {
-      result.set("ssl.ca.location", cert_path);
-    }
-    if let Ok(key_path) = env::var(KAFKA_TLS_KEY_PATH_ENV_KEY) {
-      result.set("ssl.key.location", key_path);
-    }
+    result.set("security.protocol", "SASL_SSL");
+    result.set("sasl.mechanism", "OAUTHBEARER");
+    return result;
+  }
+  let brokers = env::var(KAFKA_BROKERS_ENV_KEY)
+    .unwrap_or_else(|_| panic!("{} env var must be defined", KAFKA_BROKERS_ENV_KEY));
+  let mut result = ClientConfig::new();
+  result.set("bootstrap.servers", brokers);
+  if env::var(KAFKA_ENABLE_PLAINTEXT_ENV_KEY).unwrap_or_default() == "true" {
+    result.set("security.protocol", "plaintext");
+  }
+  if let Ok(cert_path) = env::var(KAFKA_TLS_CERT_PATH_ENV_KEY) {
     result
+      .set("security.protocol", "ssl")
+      .set("ssl.certificate.location", cert_path);
+  }
+  if let Ok(cert_path) = env::var(KAFKA_TLS_CA_CERT_PATH_ENV_KEY) {
+    result.set("ssl.ca.location", cert_path);
+  }
+  if let Ok(key_path) = env::var(KAFKA_TLS_KEY_PATH_ENV_KEY) {
+    result.set("ssl.key.location", key_path);
+  }
+  result
+}
+
+fn new_consumer_config(use_output_group_id: bool) -> ClientConfig {
+  let group_id = match use_output_group_id {
+    true => "star-agg-dec",
+    false => "star-agg-enc",
+  };
+  let mut config = new_client_config();
+  config
+    .set("group.id", group_id)
+    .set("enable.auto.commit", "false")
+    .set("session.timeout.ms", "21000")
+    .set("max.poll.interval.ms", "14400000")
+    .set("auto.offset.reset", "earliest")
+    .set("queued.max.messages.kbytes", "300000");
+  config
+}
+
+pub struct KafkaLagChecker {
+  consumer: BaseConsumer<KafkaContext>,
+  topic: String,
+}
+
+impl KafkaLagChecker {
+  fn new(
+    use_output_group_id: bool,
+    topic: String,
+    context: KafkaContext,
+  ) -> Result<Self, RecordStreamError> {
+    let config = new_consumer_config(use_output_group_id);
+    let consumer: BaseConsumer<KafkaContext> = config.create_with_context(context)?;
+    // Poll once to trigger connection open/oauth authentication
+    assert!(consumer.poll(Duration::ZERO).is_none());
+    Ok(Self { consumer, topic })
   }
 
-  pub async fn get_total_kafka_lag(&self) -> Result<usize, RecordStreamError> {
-    let consumer = self
-      .consumer
-      .as_ref()
-      .ok_or(RecordStreamError::ProducerNotPresent)?;
-
+  pub async fn get_total_lag(&self) -> Result<usize, RecordStreamError> {
     // Get metadata for the topic to find all partitions
-    let metadata = consumer
+    let metadata = self
+      .consumer
       .fetch_metadata(Some(&self.topic), Duration::from_secs(10))
       .map_err(RecordStreamError::from)?;
 
@@ -305,32 +289,79 @@ impl KafkaRecordStream {
       let partition_id = partition.id();
 
       // Get high watermark for this partition
-      let (_, high_watermark) = consumer
+      let (_, high_watermark) = self
+        .consumer
         .fetch_watermarks(&self.topic, partition_id, Duration::from_secs(10))
         .map_err(RecordStreamError::from)?;
 
       // Get committed offset for this partition
       let mut tpl = TopicPartitionList::new();
       tpl.add_partition(&self.topic, partition_id);
-      let committed_offsets = consumer
+      let committed_offsets = self
+        .consumer
         .committed_offsets(tpl, Duration::from_secs(10))
         .map_err(RecordStreamError::from)?;
 
-      let committed_offset = committed_offsets
+      // Only add to total lag if Offset::Offset is the variant
+      if let Some(elem) = committed_offsets
         .elements()
         .iter()
         .find(|elem| elem.partition() == partition_id)
-        .and_then(|elem| elem.offset().to_raw())
-        .unwrap_or(0) // If no commit, assume starting from beginning
-        .max(0); // Treat any negative offset as 0
-
-      // Calculate lag for this partition
-      let partition_lag = high_watermark - committed_offset;
-
-      total_lag += partition_lag as usize; // Ensure non-negative
+      {
+        if let Offset::Offset(committed_offset) = elem.offset() {
+          // Calculate lag for this partition
+          let partition_lag = high_watermark - committed_offset;
+          total_lag += partition_lag as usize; // Ensure non-negative
+        }
+      }
     }
 
     Ok(total_lag)
+  }
+}
+
+impl KafkaRecordStream {
+  fn new(stream_config: KafkaRecordStreamConfig, context: KafkaContext) -> Self {
+    let mut result = Self {
+      producer: None,
+      consumer: None,
+      topic: stream_config.topic.clone(),
+      producer_queues: RwLock::new(Vec::new()),
+    };
+    if stream_config.enable_producer {
+      let mut config = new_client_config();
+      let mut config_ref = &mut config;
+      if stream_config.use_output_group_id {
+        config_ref = config_ref.set("transactional.id", "main");
+      }
+      result.producer = Some(Arc::new(
+        config_ref
+          .set("message.timeout.ms", "3600000")
+          .set("transaction.timeout.ms", "3600000")
+          .set("request.timeout.ms", "900000")
+          .set("socket.timeout.ms", "300000")
+          .create_with_context(context.clone())
+          .unwrap(),
+      ));
+      info!("Producing to topic: {}", stream_config.topic);
+    }
+    if stream_config.enable_consumer {
+      let config = new_consumer_config(stream_config.use_output_group_id);
+      result.consumer = Some(config.create_with_context(context.clone()).unwrap());
+      info!(
+        "Consuming from topic: {} (current offsets: {:?})",
+        stream_config.topic,
+        result.consumer.as_ref().unwrap().position().unwrap()
+      );
+      result
+        .consumer
+        .as_ref()
+        .unwrap()
+        .subscribe(&[&stream_config.topic])
+        .unwrap();
+    }
+
+    result
   }
 }
 

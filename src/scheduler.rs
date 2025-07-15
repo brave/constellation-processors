@@ -21,10 +21,7 @@ use time::{Duration, OffsetDateTime};
 use crate::{
   channel::get_data_channel_map_from_env,
   rds::RDSManager,
-  record_stream::{
-    get_data_channel_topic_map_from_env, KafkaRecordStream, KafkaRecordStreamConfig,
-    KafkaRecordStreamFactory,
-  },
+  record_stream::{get_data_channel_topic_map_from_env, KafkaLagChecker, KafkaRecordStreamFactory},
   slack::SlackClient,
 };
 
@@ -58,7 +55,7 @@ struct ChannelInfo {
   kafka_lag_threshold: usize,
   min_time_between_jobs: CalendarDuration,
   cronjob_name: String,
-  record_stream: KafkaRecordStream,
+  lag_checker: KafkaLagChecker,
 }
 
 pub struct Scheduler {
@@ -200,13 +197,7 @@ impl Scheduler {
     let mut channels = HashMap::new();
 
     for (channel_name, topic_name) in topic_map.iter() {
-      let stream_config = KafkaRecordStreamConfig {
-        enable_producer: false,
-        enable_consumer: true,
-        topic: topic_name.clone(),
-        use_output_group_id: false,
-      };
-      let record_stream = factory.create_record_stream(stream_config);
+      let lag_checker = factory.create_lag_checker(false, topic_name.clone())?;
 
       let threshold_str = threshold_map.get(channel_name).ok_or_else(|| {
         anyhow!(
@@ -245,7 +236,7 @@ impl Scheduler {
         kafka_lag_threshold,
         min_time_between_jobs,
         cronjob_name,
-        record_stream,
+        lag_checker,
       };
 
       channels.insert(channel_name.clone(), channel_info);
@@ -384,8 +375,8 @@ impl Scheduler {
     let channel_info = self.channels.get(channel_name).unwrap();
 
     let total_lag = channel_info
-      .record_stream
-      .get_total_kafka_lag()
+      .lag_checker
+      .get_total_lag()
       .await
       .map_err(|e| {
         anyhow!(
