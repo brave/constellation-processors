@@ -21,6 +21,7 @@ const USER_AGENT_KEY: &str = "User-Agent";
 const DATE_QUERY_KEY: &str = "X-Amz-Date";
 const EXPIRES_QUERY_KEY: &str = "X-Amz-Expires";
 const DEFAULT_EXPIRY_SECONDS: u64 = 900;
+const INTERNAL_EXPIRY: Duration = Duration::minutes(7);
 
 const USER_AGENT_VALUE: &str = "constellation-processors";
 
@@ -67,7 +68,12 @@ async fn generate_auth_token_async() -> IAMResult<TokenInfo> {
 
   sign_request_url(&mut url, &config).await?;
 
-  let expiration_time = get_expiration_time(&url)?;
+  let mut expiration_time = get_expiration_time(&url)?;
+  let internal_expiration_time = UtcDateTime::now() + INTERNAL_EXPIRY;
+
+  if internal_expiration_time < expiration_time {
+    expiration_time = internal_expiration_time;
+  }
 
   url
     .query_pairs_mut()
