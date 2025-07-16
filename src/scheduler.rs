@@ -10,6 +10,7 @@ use kube::{
 use log::{error, info};
 
 use std::time::Duration as StdDuration;
+use tokio::time::interval;
 
 use std::{
   collections::HashMap,
@@ -397,6 +398,8 @@ impl Scheduler {
   }
 
   async fn scheduler_loop(&mut self) -> Result<()> {
+    let mut scheduler_interval = interval(StdDuration::from_secs(60));
+
     loop {
       // Collect channels that should run jobs
       let (jobs_active_or_imminent, channels_to_run) = {
@@ -478,8 +481,8 @@ impl Scheduler {
         self.run_job_for_channel(&channel_name).await?;
       }
 
-      // Sleep for 1 minute
-      tokio::time::sleep(StdDuration::from_secs(60)).await;
+      // Wait for the next tick (1 minute interval)
+      scheduler_interval.tick().await;
     }
   }
 

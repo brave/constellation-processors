@@ -20,7 +20,7 @@ use std::time::Duration;
 use tokio::sync::mpsc::{error::SendError, unbounded_channel, UnboundedSender};
 use tokio::sync::{Mutex, RwLock};
 use tokio::task::{JoinError, JoinHandle};
-use tokio::time::sleep;
+use tokio::time::{interval, sleep};
 
 use crate::channel::{get_data_channel_map_from_env, get_data_channel_value_from_env};
 use crate::msk_iam::MSKIAMAuthManager;
@@ -251,8 +251,9 @@ fn new_consumer_config(use_output_group_id: bool) -> ClientConfig {
 }
 
 pub struct KafkaLagChecker {
-  consumer: BaseConsumer<KafkaContext>,
+  consumer: Arc<BaseConsumer<KafkaContext>>,
   topic: String,
+  refresh_task_handle: JoinHandle<()>,
 }
 
 impl KafkaLagChecker {
@@ -262,14 +263,33 @@ impl KafkaLagChecker {
     context: KafkaContext,
   ) -> Result<Self, RecordStreamError> {
     let config = new_consumer_config(use_output_group_id);
-    let consumer: BaseConsumer<KafkaContext> = config.create_with_context(context)?;
-    Ok(Self { consumer, topic })
+    let consumer: Arc<BaseConsumer<KafkaContext>> = Arc::new(config.create_with_context(context)?);
+
+    // Clone the consumer for the background task
+    let background_consumer = consumer.clone();
+
+    assert!(background_consumer.poll(Duration::ZERO).is_none());
+
+    // Spawn background task that polls every 5 minutes
+    let task_handle = tokio::spawn(async move {
+      let mut poll_interval = interval(Duration::from_secs(60));
+
+      loop {
+        poll_interval.tick().await;
+
+        // Poll to keep connection alive
+        assert!(background_consumer.poll(Duration::ZERO).is_none());
+      }
+    });
+
+    Ok(Self {
+      consumer,
+      topic,
+      refresh_task_handle: task_handle,
+    })
   }
 
   pub async fn get_total_lag(&self) -> Result<usize, RecordStreamError> {
-    // Poll once to trigger connection open/oauth authentication
-    assert!(self.consumer.poll(Duration::ZERO).is_none());
-
     // Get metadata for the topic to find all partitions
     let metadata = self
       .consumer
@@ -318,6 +338,12 @@ impl KafkaLagChecker {
     }
 
     Ok(total_lag)
+  }
+}
+
+impl Drop for KafkaLagChecker {
+  fn drop(&mut self) {
+    self.refresh_task_handle.abort();
   }
 }
 
