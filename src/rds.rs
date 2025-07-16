@@ -3,10 +3,14 @@ use aws_config::sts::AssumeRoleProvider;
 use aws_sdk_rds::Client as RdsClient;
 use log::info;
 use std::env;
+use tokio::time::{sleep, Duration};
 
 const RDS_MANAGEMENT_ROLE_ENV_KEY: &str = "RDS_MANAGEMENT_ROLE";
 const RDS_CLUSTER_ID_ENV_KEY: &str = "RDS_CLUSTER_ID";
 const SESSION_NAME: &str = "rds-management-session";
+
+const CLUSTER_STATUS_AVAILABLE: &str = "available";
+const CLUSTER_STATUS_STOPPED: &str = "stopped";
 
 pub struct RDSManager {
   cluster_id: String,
@@ -55,6 +59,8 @@ impl RDSManager {
       .send()
       .await?;
 
+    self.wait_for_status(true).await?;
+
     self.cached_running_status = Some(true);
     info!("Successfully started RDS cluster: {}", self.cluster_id);
     Ok(())
@@ -74,16 +80,47 @@ impl RDSManager {
       .send()
       .await?;
 
+    self.wait_for_status(false).await?;
+
     self.cached_running_status = Some(false);
     info!("Successfully stopped RDS cluster: {}", self.cluster_id);
     Ok(())
   }
 
-  async fn is_running(&mut self) -> Result<bool> {
-    if let Some(cached_status) = self.cached_running_status {
-      return Ok(cached_status);
+  async fn wait_for_status(&self, target_running: bool) -> Result<()> {
+    let target_status = if target_running {
+      CLUSTER_STATUS_AVAILABLE
+    } else {
+      CLUSTER_STATUS_STOPPED
+    };
+    info!(
+      "Waiting for RDS cluster {} to reach status: {}",
+      self.cluster_id, target_status
+    );
+
+    loop {
+      let current_status = self.get_cluster_status().await?;
+
+      if current_status == target_status {
+        info!(
+          "RDS cluster {} reached target status: {}",
+          self.cluster_id, target_status
+        );
+        break;
+      }
+
+      debug!(
+        "RDS cluster {} current status: {}, waiting for: {}",
+        self.cluster_id, current_status, target_status
+      );
+
+      sleep(Duration::from_secs(30)).await;
     }
 
+    Ok(())
+  }
+
+  async fn get_cluster_status(&self) -> Result<String> {
     let response = self
       .rds_client
       .describe_db_clusters()
@@ -94,9 +131,24 @@ impl RDSManager {
     let response_clusters = response.db_clusters();
 
     if response_clusters.is_empty() {
-      return Ok(false);
+      return Err(anyhow::anyhow!(
+        "RDS cluster not found: {}",
+        self.cluster_id
+      ));
     }
-    self.cached_running_status = Some(response_clusters[0].status().unwrap() == "available");
-    Ok(self.cached_running_status.unwrap())
+
+    Ok(response_clusters[0].status().unwrap_or("").to_string())
+  }
+
+  async fn is_running(&mut self) -> Result<bool> {
+    if let Some(cached_status) = self.cached_running_status {
+      return Ok(cached_status);
+    }
+
+    let status = self.get_cluster_status().await?;
+    let is_available = status == CLUSTER_STATUS_AVAILABLE;
+
+    self.cached_running_status = Some(is_available);
+    Ok(is_available)
   }
 }

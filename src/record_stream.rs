@@ -52,7 +52,6 @@ pub enum RecordStreamError {
   Kafka(KafkaError),
   Deserialize,
   ProducerNotPresent,
-  LagCheckerNotPresent,
   TestConsumeTimeout,
   MpscSendError(SendError<Vec<u8>>),
   Join(JoinError),
