@@ -60,6 +60,7 @@ pub async fn start_lakesink(
     enable_consumer: true,
     topic: stream_topic,
     use_output_group_id: true,
+    channel_name: channel_name.clone(),
   });
 
   let lake = if output_measurements_to_stdout {

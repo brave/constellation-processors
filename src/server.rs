@@ -166,12 +166,13 @@ pub async fn start_server(worker_count: usize, main_channel: String) -> std::io:
     .into_iter()
     .map(|(channel_name, topic)| {
       (
-        channel_name,
+        channel_name.clone(),
         rec_stream_factory.create_record_stream(KafkaRecordStreamConfig {
           enable_producer: true,
           enable_consumer: false,
           topic,
           use_output_group_id: false,
+          channel_name,
         }),
       )
     })

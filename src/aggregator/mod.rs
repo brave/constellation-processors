@@ -62,6 +62,7 @@ fn create_output_stream(
         enable_consumer: false,
         topic,
         use_output_group_id: true,
+        channel_name: channel_name.to_string(),
       }),
     );
     out_stream.init_producer_transactions()?;
@@ -118,6 +119,7 @@ pub async fn start_aggregation(
         enable_consumer: true,
         topic: in_stream_topic.clone(),
         use_output_group_id: false,
+        channel_name: channel_name.to_string(),
       },
     )));
   }

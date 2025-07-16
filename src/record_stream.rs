@@ -138,6 +138,7 @@ pub struct KafkaRecordStreamConfig {
   pub enable_consumer: bool,
   pub topic: String,
   pub use_output_group_id: bool,
+  pub channel_name: String,
 }
 
 pub struct KafkaRecordStreamFactory {
@@ -332,7 +333,8 @@ impl KafkaRecordStream {
       let mut config = new_client_config();
       let mut config_ref = &mut config;
       if stream_config.use_output_group_id {
-        config_ref = config_ref.set("transactional.id", "main");
+        let transaction_id = format!("main-{}", stream_config.channel_name);
+        config_ref = config_ref.set("transactional.id", &transaction_id);
       }
       result.producer = Some(Arc::new(
         config_ref
