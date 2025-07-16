@@ -262,12 +262,13 @@ impl KafkaLagChecker {
   ) -> Result<Self, RecordStreamError> {
     let config = new_consumer_config(use_output_group_id);
     let consumer: BaseConsumer<KafkaContext> = config.create_with_context(context)?;
-    // Poll once to trigger connection open/oauth authentication
-    assert!(consumer.poll(Duration::ZERO).is_none());
     Ok(Self { consumer, topic })
   }
 
   pub async fn get_total_lag(&self) -> Result<usize, RecordStreamError> {
+    // Poll once to trigger connection open/oauth authentication
+    assert!(self.consumer.poll(Duration::ZERO).is_none());
+
     // Get metadata for the topic to find all partitions
     let metadata = self
       .consumer
