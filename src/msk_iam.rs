@@ -31,6 +31,7 @@ type IAMResult<T> = std::result::Result<T, Box<dyn Error + Send + Sync>>;
 pub struct TokenInfo {
   pub token: String,
   pub expiration_time: UtcDateTime,
+  refresh_at: UtcDateTime,
 }
 pub struct MSKIAMAuthManager {
   token_info: Option<TokenInfo>,
@@ -43,7 +44,7 @@ impl MSKIAMAuthManager {
 
   pub fn get_auth_token(&mut self) -> IAMResult<TokenInfo> {
     if let Some(token_info) = &self.token_info {
-      if token_info.expiration_time > UtcDateTime::now() {
+      if token_info.refresh_at > UtcDateTime::now() {
         return Ok(token_info.clone());
       }
     }
@@ -68,11 +69,10 @@ async fn generate_auth_token_async() -> IAMResult<TokenInfo> {
 
   sign_request_url(&mut url, &config).await?;
 
-  let mut expiration_time = get_expiration_time(&url)?;
-  let internal_expiration_time = UtcDateTime::now() + INTERNAL_EXPIRY;
-
-  if internal_expiration_time < expiration_time {
-    expiration_time = internal_expiration_time;
+  let expiration_time = get_expiration_time(&url)?;
+  let mut refresh_at = UtcDateTime::now() + INTERNAL_EXPIRY;
+  if expiration_time < refresh_at {
+    refresh_at = expiration_time;
   }
 
   url
@@ -84,6 +84,7 @@ async fn generate_auth_token_async() -> IAMResult<TokenInfo> {
   Ok(TokenInfo {
     token: encoded,
     expiration_time,
+    refresh_at,
   })
 }
 

@@ -17,7 +17,7 @@ use std::{
   env,
   sync::{Arc, Mutex},
 };
-use time::{Duration, OffsetDateTime};
+use time::{Duration, OffsetDateTime, UtcDateTime};
 
 use crate::{
   channel::get_data_channel_map_from_env,
@@ -48,8 +48,8 @@ const JOB_IMMINENT_THRESHOLD: Duration = Duration::minutes(30);
 struct JobState {
   last_job_id: Option<String>,
   retry_count: u32,
-  scheduled_at: Option<OffsetDateTime>,
-  last_job_success_time: Option<OffsetDateTime>,
+  scheduled_at: Option<UtcDateTime>,
+  last_job_success_time: Option<UtcDateTime>,
 }
 
 struct ChannelInfo {
@@ -97,7 +97,7 @@ async fn schedule_job_with_backoff(
   let delay = (BACKOFF_BASE_DELAY * (2_u32.pow(state.retry_count))).min(BACKOFF_MAX_DELAY);
 
   state.retry_count += 1;
-  state.scheduled_at = Some(OffsetDateTime::now_utc() + delay);
+  state.scheduled_at = Some(UtcDateTime::now() + delay);
   state.last_job_id = None;
 
   let message = if is_eviction {
@@ -355,7 +355,7 @@ impl Scheduler {
 
         // Set success time only if job completed without failures
         if !job_failed {
-          state.last_job_success_time = Some(OffsetDateTime::now_utc());
+          state.last_job_success_time = Some(UtcDateTime::now());
           state.retry_count = 0;
           info!(
             "Job {} completed successfully for channel {}",
@@ -388,7 +388,7 @@ impl Scheduler {
       })?;
 
     if total_lag >= channel_info.kafka_lag_threshold {
-      state.scheduled_at = Some(OffsetDateTime::now_utc());
+      state.scheduled_at = Some(UtcDateTime::now());
       info!(
         "Kafka lag threshold exceeded for channel {}: {} >= {}",
         channel_name, total_lag, channel_info.kafka_lag_threshold
@@ -418,7 +418,7 @@ impl Scheduler {
 
           self.check_kafka_lag(channel_name, state).await?;
 
-          let now = OffsetDateTime::now_utc();
+          let now = UtcDateTime::now();
 
           // Check if enough time has passed since last successful job
           if let Some(last_success) = state.last_job_success_time {
@@ -428,7 +428,7 @@ impl Scheduler {
               .unwrap()
               .min_time_between_jobs
               .clone();
-            let lockout_expiry = last_success + min_time;
+            let lockout_expiry = (OffsetDateTime::from(last_success) + min_time).to_utc();
             if now < lockout_expiry {
               continue; // Not enough time has passed since last success
             }
@@ -509,7 +509,7 @@ impl Scheduler {
       .ok_or_else(|| anyhow::anyhow!("CronJob {} has no spec", cronjob_name))?
       .job_template;
 
-    let now = OffsetDateTime::now_utc();
+    let now = UtcDateTime::now();
     let timestamp = format!(
       "{:02}{:02}-{:02}{:02}{:02}",
       now.month() as u8,
