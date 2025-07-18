@@ -72,6 +72,7 @@ The `--output-measurements-to-stdout` switch can be used to output measurements 
 | SCHEDULER_MIN_TIME_BETWEEN_JOBS | `typical=3d` | No | Minimum time between successful job executions per channel. |
 | SLACK_AUTH_TOKEN | | No | Slack authentication token for notifications. |
 | SLACK_CHANNEL | | No | Slack channel for sending notifications. |
+| INCLUDE_YMD_IN_LAKE | | No | Comma-separated list of channel names that will have a "ymd" date field added to their JSON data. |
 
 #### Data channel settings
 
