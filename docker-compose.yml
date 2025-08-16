@@ -19,7 +19,7 @@ services:
     networks:
       - star-agg
   db:
-    image: postgres@sha256:87ec5e0a167dc7d4831729f9e1d2ee7b8597dcc49ccd9e43cc5f89e808d2adae
+    image: postgres@sha256:29e0bb09c8e7e7fc265ea9f4367de9622e55bae6b0b97e7cce740c2d63c2ebc0
     command: postgres -c 'max_connections=300'
     ports:
       - 5642:5432
