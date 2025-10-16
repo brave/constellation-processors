@@ -84,17 +84,24 @@ pub async fn process_expired_epochs(
 fn drain_chunk_messages_for_threshold(
   chunk: &mut MessageChunk,
   threshold: usize,
-) -> Result<Vec<NestedMessage>, AggregatorError> {
+  total_error_count: &mut usize,
+) -> Vec<NestedMessage> {
   let mut msgs = Vec::new();
   if let Some(new_msgs) = chunk.new_msgs.get_mut(&threshold) {
     msgs.append(new_msgs);
   }
   if let Some(pending_msgs) = chunk.pending_msgs.get_mut(&threshold) {
     for pending_msg in pending_msgs.drain(..) {
-      msgs.push(pending_msg.try_into()?);
+      match pending_msg.try_into() {
+        Ok(msg) => msgs.push(msg),
+        Err(e) => {
+          debug!("failed to parse pending message, will omit; error = {e}");
+          *total_error_count += 1;
+        }
+      }
     }
   }
-  Ok(msgs)
+  msgs
 }
 
 /// Returns None if key recovery process failed, which indicates
@@ -106,6 +113,7 @@ fn get_recovery_key(
   chunk: &mut MessageChunk,
   recovery_threshold: Option<usize>,
   existing_rec_msg: Option<&&mut RecoveredMessage>,
+  total_error_count: &mut usize,
 ) -> Result<Option<(Vec<u8>, Option<Vec<NestedMessage>>)>, AggregatorError> {
   let mut key_recovery_msgs: Option<Vec<_>> = None;
 
@@ -122,7 +130,7 @@ fn get_recovery_key(
       .unwrap_or_default();
 
     // drain messages required for recovery into the vec
-    let mut msgs = drain_chunk_messages_for_threshold(chunk, threshold)?;
+    let mut msgs = drain_chunk_messages_for_threshold(chunk, threshold, total_error_count);
 
     let key = match recover_key(&msgs, epoch, threshold) {
       Err(e) => {
@@ -170,15 +178,20 @@ fn process_one_layer(
 
       let has_pending_msgs = chunk.pending_msgs.values().any(|v| !v.is_empty());
 
-      let (key, mut key_recovery_msgs) =
-        match get_recovery_key(*epoch, chunk, recovery_threshold, existing_rec_msg.as_ref())? {
-          Some(res) => res,
-          None => {
-            // key recovery failed. stop processing for the current message chunk/tag,
-            // save messages in db for later attempt
-            continue;
-          }
-        };
+      let (key, mut key_recovery_msgs) = match get_recovery_key(
+        *epoch,
+        chunk,
+        recovery_threshold,
+        existing_rec_msg.as_ref(),
+        &mut total_error_count,
+      )? {
+        Some(res) => res,
+        None => {
+          // key recovery failed. stop processing for the current message chunk/tag,
+          // save messages in db for later attempt
+          continue;
+        }
+      };
 
       let mut msgs_len = 0i64;
       let mut metric_name: Option<String> = None;
@@ -196,7 +209,7 @@ fn process_one_layer(
           // recovery step, so use this existing vec
           key_recovery_msgs.take().unwrap()
         } else {
-          drain_chunk_messages_for_threshold(chunk, threshold)?
+          drain_chunk_messages_for_threshold(chunk, threshold, &mut total_error_count)
         };
 
         if msgs.is_empty() {
