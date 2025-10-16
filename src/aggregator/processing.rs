@@ -84,24 +84,17 @@ pub async fn process_expired_epochs(
 fn drain_chunk_messages_for_threshold(
   chunk: &mut MessageChunk,
   threshold: usize,
-  total_error_count: &mut usize,
-) -> Vec<NestedMessage> {
+) -> Result<Vec<NestedMessage>, AggregatorError> {
   let mut msgs = Vec::new();
   if let Some(new_msgs) = chunk.new_msgs.get_mut(&threshold) {
     msgs.append(new_msgs);
   }
   if let Some(pending_msgs) = chunk.pending_msgs.get_mut(&threshold) {
     for pending_msg in pending_msgs.drain(..) {
-      match pending_msg.try_into() {
-        Ok(msg) => msgs.push(msg),
-        Err(e) => {
-          debug!("failed to parse pending message, will omit; error = {e}");
-          *total_error_count += 1;
-        }
-      }
+      msgs.push(pending_msg.try_into()?);
     }
   }
-  msgs
+  Ok(msgs)
 }
 
 /// Returns None if key recovery process failed, which indicates
@@ -113,7 +106,6 @@ fn get_recovery_key(
   chunk: &mut MessageChunk,
   recovery_threshold: Option<usize>,
   existing_rec_msg: Option<&&mut RecoveredMessage>,
-  total_error_count: &mut usize,
 ) -> Result<Option<(Vec<u8>, Option<Vec<NestedMessage>>)>, AggregatorError> {
   let mut key_recovery_msgs: Option<Vec<_>> = None;
 
@@ -130,7 +122,7 @@ fn get_recovery_key(
       .unwrap_or_default();
 
     // drain messages required for recovery into the vec
-    let mut msgs = drain_chunk_messages_for_threshold(chunk, threshold, total_error_count);
+    let mut msgs = drain_chunk_messages_for_threshold(chunk, threshold)?;
 
     let key = match recover_key(&msgs, epoch, threshold) {
       Err(e) => {
@@ -158,6 +150,7 @@ fn get_recovery_key(
 fn process_one_layer(
   grouped_msgs: &mut GroupedMessages,
   rec_msgs: &mut RecoveredMessages,
+  id: usize,
 ) -> Result<(GroupedMessages, Vec<(u8, Vec<u8>)>, usize, bool), AggregatorError> {
   let mut next_grouped_msgs = GroupedMessages::default();
   let mut pending_tags_to_remove = Vec::new();
@@ -178,20 +171,15 @@ fn process_one_layer(
 
       let has_pending_msgs = chunk.pending_msgs.values().any(|v| !v.is_empty());
 
-      let (key, mut key_recovery_msgs) = match get_recovery_key(
-        *epoch,
-        chunk,
-        recovery_threshold,
-        existing_rec_msg.as_ref(),
-        &mut total_error_count,
-      )? {
-        Some(res) => res,
-        None => {
-          // key recovery failed. stop processing for the current message chunk/tag,
-          // save messages in db for later attempt
-          continue;
-        }
-      };
+      let (key, mut key_recovery_msgs) =
+        match get_recovery_key(*epoch, chunk, recovery_threshold, existing_rec_msg.as_ref())? {
+          Some(res) => res,
+          None => {
+            // key recovery failed. stop processing for the current message chunk/tag,
+            // save messages in db for later attempt
+            continue;
+          }
+        };
 
       let mut msgs_len = 0i64;
       let mut metric_name: Option<String> = None;
@@ -209,7 +197,7 @@ fn process_one_layer(
           // recovery step, so use this existing vec
           key_recovery_msgs.take().unwrap()
         } else {
-          drain_chunk_messages_for_threshold(chunk, threshold, &mut total_error_count)
+          drain_chunk_messages_for_threshold(chunk, threshold)?
         };
 
         if msgs.is_empty() {
@@ -217,11 +205,11 @@ fn process_one_layer(
         }
         msgs_len += msgs.len() as i64;
 
-        let MsgRecoveryInfo {
-          measurement,
-          next_layer_messages,
-          error_count,
-        } = recover_msgs(msgs, &key)?;
+        let msgs_len = msgs.len();
+        let MsgRecoveryInfo { measurement, next_layer_messages, error_count } = recover_msgs(msgs, &key).map_err(|e| {
+          debug!("failed to recover {msgs_len} messages for threshold {threshold} on id {id} for tag {}: {e}", hex::encode(msg_tag));
+          e
+        })?;
 
         metric_name = Some(measurement.0);
         metric_value = Some(measurement.1);
@@ -318,7 +306,7 @@ pub fn start_subtask(
         id, tag_count
       );
       let (new_grouped_msgs, pending_tags_to_remove_chunk, layer_error_count, has_processed) =
-        process_one_layer(&mut grouped_msgs, &mut rec_msgs).unwrap();
+        process_one_layer(&mut grouped_msgs, &mut rec_msgs, id).unwrap();
       error_count += layer_error_count;
 
       pending_tags_to_remove.extend(pending_tags_to_remove_chunk);
