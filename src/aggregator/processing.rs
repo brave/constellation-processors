@@ -150,6 +150,7 @@ fn get_recovery_key(
 fn process_one_layer(
   grouped_msgs: &mut GroupedMessages,
   rec_msgs: &mut RecoveredMessages,
+  id: usize,
 ) -> Result<(GroupedMessages, Vec<(u8, Vec<u8>)>, usize, bool), AggregatorError> {
   let mut next_grouped_msgs = GroupedMessages::default();
   let mut pending_tags_to_remove = Vec::new();
@@ -204,11 +205,11 @@ fn process_one_layer(
         }
         msgs_len += msgs.len() as i64;
 
-        let MsgRecoveryInfo {
-          measurement,
-          next_layer_messages,
-          error_count,
-        } = recover_msgs(msgs, &key)?;
+        let msgs_len = msgs.len();
+        let MsgRecoveryInfo { measurement, next_layer_messages, error_count } = recover_msgs(msgs, &key).map_err(|e| {
+          debug!("failed to recover {msgs_len} messages for threshold {threshold} on id {id} for tag {}: {e}", hex::encode(msg_tag));
+          e
+        })?;
 
         metric_name = Some(measurement.0);
         metric_value = Some(measurement.1);
@@ -305,7 +306,7 @@ pub fn start_subtask(
         id, tag_count
       );
       let (new_grouped_msgs, pending_tags_to_remove_chunk, layer_error_count, has_processed) =
-        process_one_layer(&mut grouped_msgs, &mut rec_msgs).unwrap();
+        process_one_layer(&mut grouped_msgs, &mut rec_msgs, id).unwrap();
       error_count += layer_error_count;
 
       pending_tags_to_remove.extend(pending_tags_to_remove_chunk);
