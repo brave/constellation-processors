@@ -19,6 +19,8 @@ use std::sync::{Arc, Mutex};
 use std::time::Instant;
 use tokio::task::JoinHandle;
 
+const MAX_MSGS_TOTAL_RECOVERY_FAIL: usize = 75;
+
 pub async fn process_expired_epoch(
   conn: Arc<Mutex<DBConnection>>,
   epoch_config: &EpochConfig,
@@ -203,14 +205,25 @@ fn process_one_layer(
         if msgs.is_empty() {
           continue;
         }
-        msgs_len += msgs.len() as i64;
+        let threshold_msgs_len = msgs.len();
 
-        let msgs_len = msgs.len();
-        let MsgRecoveryInfo { measurement, next_layer_messages, error_count } = recover_msgs(msgs, &key).map_err(|e| {
-          debug!("failed to recover {msgs_len} messages for threshold {threshold} on id {id} for tag {}: {e}", hex::encode(msg_tag));
-          e
-        })?;
+        let MsgRecoveryInfo {
+          measurement,
+          next_layer_messages,
+          error_count,
+        } = match recover_msgs(msgs, &key) {
+          Ok(info) => info,
+          Err(e) => {
+            debug!("failed to recover {threshold_msgs_len} messages for threshold {threshold} on id {id} for tag {}: {e}", hex::encode(msg_tag));
+            if threshold_msgs_len <= MAX_MSGS_TOTAL_RECOVERY_FAIL {
+              total_error_count += threshold_msgs_len;
+              continue;
+            }
+            return Err(e.into());
+          }
+        };
 
+        msgs_len += threshold_msgs_len as i64;
         metric_name = Some(measurement.0);
         metric_value = Some(measurement.1);
 
@@ -225,6 +238,10 @@ fn process_one_layer(
             next_grouped_msgs.add(MessageWithThreshold { msg, threshold }, Some(msg_tag));
           }
         }
+      }
+
+      if msgs_len == 0 {
+        continue;
       }
 
       // create or update recovered msg with new count
