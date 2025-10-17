@@ -12,6 +12,7 @@ use crate::models::{
 use crate::profiler::{Profiler, ProfilerStat};
 use crate::record_stream::{DynRecordStream, RecordStreamArc};
 use crate::star::{recover_key, recover_msgs, AppSTARError, MsgRecoveryInfo};
+use crate::util::parse_env_var;
 use star_constellation::api::NestedMessage;
 use star_constellation::Error as ConstellationError;
 use std::collections::HashSet;
@@ -19,7 +20,8 @@ use std::sync::{Arc, Mutex};
 use std::time::Instant;
 use tokio::task::JoinHandle;
 
-const MAX_MSGS_TOTAL_RECOVERY_FAIL: usize = 75;
+const TOTAL_RECOVERY_FAIL_MAX_MSGS_ENV: &str = "TOTAL_RECOVERY_FAIL_MAX_MSGS";
+const TOTAL_RECOVERY_FAIL_MAX_MSGS_DEFAULT: &str = "75";
 
 pub async fn process_expired_epoch(
   conn: Arc<Mutex<DBConnection>>,
@@ -215,7 +217,12 @@ fn process_one_layer(
           Ok(info) => info,
           Err(e) => {
             debug!("failed to recover {threshold_msgs_len} messages for threshold {threshold} on id {id} for tag {}: {e}", hex::encode(msg_tag));
-            if threshold_msgs_len <= MAX_MSGS_TOTAL_RECOVERY_FAIL {
+            if threshold_msgs_len
+              <= parse_env_var::<usize>(
+                TOTAL_RECOVERY_FAIL_MAX_MSGS_ENV,
+                TOTAL_RECOVERY_FAIL_MAX_MSGS_DEFAULT,
+              )
+            {
               total_error_count += threshold_msgs_len;
               continue;
             }
