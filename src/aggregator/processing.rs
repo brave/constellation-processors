@@ -216,7 +216,11 @@ fn process_one_layer(
         } = match recover_msgs(msgs, &key) {
           Ok(info) => info,
           Err(e) => {
-            debug!("failed to recover {threshold_msgs_len} messages for threshold {threshold} on id {id} for tag {}: {e}", hex::encode(msg_tag));
+            debug!(
+              "failed to recover {threshold_msgs_len} messages for threshold {threshold} on id {id} for tag {} and parent tag {}: {e}",
+              hex::encode(msg_tag),
+              hex::encode(chunk.parent_msg_tag.clone().unwrap_or_default()),
+            );
             if threshold_msgs_len
               <= parse_env_var::<usize>(
                 TOTAL_RECOVERY_FAIL_MAX_MSGS_ENV,
