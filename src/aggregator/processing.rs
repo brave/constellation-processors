@@ -22,6 +22,8 @@ use tokio::task::JoinHandle;
 
 const TOTAL_RECOVERY_FAIL_MAX_MSGS_ENV: &str = "TOTAL_RECOVERY_FAIL_MAX_MSGS";
 const TOTAL_RECOVERY_FAIL_MAX_MSGS_DEFAULT: &str = "75";
+const TOTAL_RECOVERY_FAIL_TOP_LAYER_MAX_MSGS_ENV: &str = "TOTAL_RECOVERY_FAIL_TOP_LAYER_MAX_MSGS";
+const TOTAL_RECOVERY_FAIL_TOP_LAYER_MAX_MSGS_DEFAULT: &str = "500";
 
 pub async fn process_expired_epoch(
   conn: Arc<Mutex<DBConnection>>,
@@ -221,12 +223,18 @@ fn process_one_layer(
               hex::encode(msg_tag),
               hex::encode(chunk.parent_msg_tag.clone().unwrap_or_default()),
             );
-            if threshold_msgs_len
-              <= parse_env_var::<usize>(
+            let failure_max_threshold = match chunk.parent_msg_tag.is_some() {
+              true => parse_env_var::<usize>(
                 TOTAL_RECOVERY_FAIL_MAX_MSGS_ENV,
                 TOTAL_RECOVERY_FAIL_MAX_MSGS_DEFAULT,
-              )
-            {
+              ),
+              false => parse_env_var::<usize>(
+                TOTAL_RECOVERY_FAIL_TOP_LAYER_MAX_MSGS_ENV,
+                TOTAL_RECOVERY_FAIL_TOP_LAYER_MAX_MSGS_DEFAULT,
+              ),
+            };
+
+            if threshold_msgs_len <= failure_max_threshold {
               total_error_count += threshold_msgs_len;
               continue;
             }
