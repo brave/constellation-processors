@@ -5,7 +5,7 @@ use crate::models::{
   PendingMessage,
 };
 use crate::profiler::Profiler;
-use crate::star::serialize_message_bincode;
+use crate::star::serialize_message_postcard;
 use futures::future::try_join_all;
 use star_constellation::api::NestedMessage;
 use std::cmp::max;
@@ -156,8 +156,9 @@ impl GroupedMessages {
             new_pending_msgs.push(NewPendingMessage {
               msg_tag: tag.clone(),
               epoch_tag: epoch as i16,
-              message: serialize_message_bincode(msg)?,
+              message: serialize_message_postcard(msg)?,
               threshold: i16::try_from(threshold).map_err(|_| AggregatorError::ThresholdTooBig)?,
+              is_postcard: true,
             });
           }
         }

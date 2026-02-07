@@ -3,8 +3,13 @@ name = "test-client"
 version = "0.1.0"
 edition = "2021"
 
+[features]
+default = ["postcard"]
+postcard = ["star-constellation/postcard"]
+bincode = ["star-constellation/bincode"]
+
 [dependencies]
-star-constellation = "0.2"
+star-constellation = { version = "0.4.0", default-features = false }
 base64 = "0.21"
 rand = "0.8"
 clap = { version = "4.5", features = ["derive"] }

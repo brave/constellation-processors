@@ -23,6 +23,7 @@ use derive_more::{Display, Error, From};
 use futures::{future::try_join, FutureExt};
 use prometheus_client::registry::Registry;
 use reqwest::header::HeaderName;
+use std::borrow::Cow;
 use std::collections::HashMap;
 use std::ops::RangeInclusive;
 use std::str::{from_utf8, FromStr, Utf8Error};
@@ -36,6 +37,9 @@ const MAX_REQUEST_K_THRESHOLD_ENV_KEY: &str = "MAX_REQUEST_K_THRESHOLD";
 const MAX_REQUEST_K_THRESHOLD_DEFAULT: &str = "50";
 const REVISION_HEADER: &str = "brave-p3a-version";
 const THRESHOLD_HEADER: &str = "brave-p3a-constellation-threshold";
+const CONTENT_TYPE_HEADER: &str = "content-type";
+const CONTENT_TYPE_OCTET_STREAM: &str = "application/octet-stream";
+const CONTENT_TYPE_TEXT_PLAIN: &str = "text/plain";
 
 #[derive(From, Error, Display, Debug)]
 pub enum WebError {
@@ -47,6 +51,8 @@ pub enum WebError {
   STARDecode(AppSTARError),
   #[display(fmt = "Bad k threshold in request header")]
   BadThreshold,
+  #[display(fmt = "Bad content type")]
+  BadContentType,
   #[display(fmt = "Internal server error")]
   Internal,
 }
@@ -73,7 +79,8 @@ impl ResponseError for WebError {
       WebError::STARDecode(_)
       | WebError::Utf8(_)
       | WebError::Base64(_)
-      | WebError::BadThreshold => StatusCode::BAD_REQUEST,
+      | WebError::BadThreshold
+      | WebError::BadContentType => StatusCode::BAD_REQUEST,
       WebError::Internal => StatusCode::INTERNAL_SERVER_ERROR,
     }
   }
@@ -107,9 +114,21 @@ async fn handle_measurement_submit(
   match state.channel_rec_streams.get(channel_name) {
     None => Ok(HttpResponse::NotFound().finish()),
     Some(rec_stream) => {
-      let body_str = from_utf8(&body)?.trim();
-      let bincode_msg = base64_engine::STANDARD.decode(body_str)?;
-      let message = parse_message(&bincode_msg)?;
+      let content_type = request
+        .headers()
+        .get(CONTENT_TYPE_HEADER)
+        .and_then(|v| v.to_str().ok());
+
+      let (msg_bytes, is_postcard) = match content_type {
+        Some(CONTENT_TYPE_OCTET_STREAM) => (Cow::Borrowed(body.as_ref()), true),
+        Some(CONTENT_TYPE_TEXT_PLAIN) => {
+          let body_str = from_utf8(&body)?.trim();
+          (Cow::Owned(base64_engine::STANDARD.decode(body_str)?), false)
+        }
+        _ => return Err(WebError::BadContentType),
+      };
+
+      let message = parse_message(&msg_bytes, is_postcard)?;
 
       if let Some(min_revision) = state.min_revision_map.get(channel_name) {
         let req_revision: usize =
@@ -126,7 +145,7 @@ async fn handle_measurement_submit(
         }
       }
 
-      match rec_stream.produce(&bincode_msg, threshold).await {
+      match rec_stream.produce(&msg_bytes, threshold, is_postcard).await {
         Err(e) => {
           error!("Failed to push message: {}", e);
           Err(WebError::Internal)

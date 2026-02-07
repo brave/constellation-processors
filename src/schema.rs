@@ -7,6 +7,7 @@ diesel::table! {
         epoch_tag -> Int2,
         message -> Bytea,
         threshold -> Int2,
+        is_postcard -> Bool,
     }
 }
 

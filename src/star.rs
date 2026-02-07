@@ -12,6 +12,8 @@ use std::str::{from_utf8, Utf8Error};
 pub enum AppSTARError {
   #[display(fmt = "failed to decode bincode")]
   Bincode(bincode::Error),
+  #[display(fmt = "failed to decode postcard")]
+  Postcard(postcard::Error),
   #[display(fmt = "failed to decode utf8")]
   Utf8(Utf8Error),
   #[display(fmt = "failed to split measurement by delimiter")]
@@ -26,14 +28,18 @@ pub struct MsgRecoveryInfo {
   pub error_count: usize,
 }
 
-pub fn parse_message(bincode_msg: &[u8]) -> Result<NestedMessage, AppSTARError> {
-  let smsg: SerializableNestedMessage = bincode::deserialize(bincode_msg)?;
+pub fn parse_message(msg: &[u8], is_postcard: bool) -> Result<NestedMessage, AppSTARError> {
+  let smsg: SerializableNestedMessage = if is_postcard {
+    postcard::from_bytes(msg)?
+  } else {
+    bincode::deserialize(msg)?
+  };
   Ok(NestedMessage::try_from(smsg)?)
 }
 
-pub fn serialize_message_bincode(message: NestedMessage) -> Result<Vec<u8>, AppSTARError> {
+pub fn serialize_message_postcard(message: NestedMessage) -> Result<Vec<u8>, AppSTARError> {
   let smsg = SerializableNestedMessage::from(message);
-  Ok(bincode::serialize(&smsg)?)
+  Ok(postcard::to_stdvec(&smsg)?)
 }
 
 fn get_measurement_contents(m: &PartialMeasurement) -> Result<(String, String), AppSTARError> {
@@ -156,7 +162,7 @@ pub mod tests {
     let serialized_msg_bytes =
       client::construct_message(&points_slice_vec, None, &rrs, &None, &[], k_threshold).unwrap();
     let serialized_msg: SerializableNestedMessage =
-      bincode::deserialize(&serialized_msg_bytes).unwrap();
+      postcard::from_bytes(&serialized_msg_bytes).unwrap();
     NestedMessage::try_from(serialized_msg).unwrap()
   }
 }

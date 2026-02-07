@@ -95,7 +95,7 @@ async fn points_from_randomness_server(
     .collect()
 }
 
-async fn generate_messages(layers: &[Vec<u8>], cli_args: &CliArgs, count: usize) -> Vec<String> {
+async fn generate_messages(layers: &[Vec<u8>], cli_args: &CliArgs, count: usize) -> Vec<Vec<u8>> {
   let rnd_fetcher = LocalFetcher::new();
   let example_aux = vec![];
   let client = reqwest::Client::new();
@@ -118,24 +118,22 @@ async fn generate_messages(layers: &[Vec<u8>], cli_args: &CliArgs, count: usize)
 
     let points_slice_vec: Vec<&[u8]> = points.iter().map(|v| v.as_slice()).collect();
     messages.push(
-      base64_engine::STANDARD.encode(
-        client::construct_message(
-          &points_slice_vec,
-          None,
-          &rrs,
-          &None,
-          &example_aux,
-          cli_args.threshold,
-        )
-        .unwrap(),
-      ),
+      client::construct_message(
+        &points_slice_vec,
+        None,
+        &rrs,
+        &None,
+        &example_aux,
+        cli_args.threshold,
+      )
+      .unwrap(),
     )
   }
   messages
 }
 
-async fn gen_random_msgs(cli_args: &CliArgs) -> Vec<String> {
-  let gen_tasks: Vec<JoinHandle<Vec<String>>> = (0..cli_args.unique_count)
+async fn gen_random_msgs(cli_args: &CliArgs) -> Vec<Vec<u8>> {
+  let gen_tasks: Vec<JoinHandle<Vec<Vec<u8>>>> = (0..cli_args.unique_count)
     .map(|i| {
       let cli_args = cli_args.clone();
       tokio::spawn(async move {
@@ -205,7 +203,7 @@ async fn gen_msgs_from_data_and_save(csv_path: &str, cli_args: &CliArgs) {
       let cli_args = cli_args.clone();
       let file = file.clone();
       tokio::spawn(async move {
-        let mut task_msgs = Vec::new();
+        let mut task_msgs: Vec<String> = Vec::new();
         let chunk_len = rec_chunk.len();
         for (j, rec) in rec_chunk.into_iter().enumerate() {
           let total = usize::from_str(rec.last().unwrap()).unwrap();
@@ -215,7 +213,12 @@ async fn gen_msgs_from_data_and_save(csv_path: &str, cli_args: &CliArgs) {
             .map(|(name, value)| format!("{}|{}", name, value).as_bytes().to_vec())
             .collect();
 
-          task_msgs.extend(generate_messages(&layers, &cli_args, total).await);
+          let raw_msgs = generate_messages(&layers, &cli_args, total).await;
+          task_msgs.extend(
+            raw_msgs
+              .into_iter()
+              .map(|m| base64_engine::STANDARD.encode(m)),
+          );
 
           if j % 100 == 0 {
             println!(
@@ -238,12 +241,24 @@ async fn gen_msgs_from_data_and_save(csv_path: &str, cli_args: &CliArgs) {
   try_join_all(gen_tasks).await.unwrap();
 }
 
-async fn send_request(client: &reqwest::Client, msg: String, cli_args: &CliArgs) {
+async fn send_request(client: &reqwest::Client, msg: Vec<u8>, cli_args: &CliArgs) {
   let mut builder = client.post(&cli_args.url);
   if !cli_args.omit_threshold_header {
     builder = builder.header(THRESHOLD_HEADER_NAME, cli_args.threshold);
   }
-  let result = builder.body(msg).send().await.unwrap();
+
+  let (content_type, body) = if cfg!(feature = "postcard") {
+    ("application/octet-stream", msg)
+  } else {
+    ("text/plain", base64_engine::STANDARD.encode(msg).into_bytes())
+  };
+
+  let result = builder
+    .header("Content-Type", content_type)
+    .body(body)
+    .send()
+    .await
+    .unwrap();
   assert!(
     result.status().is_success(),
     "status is {}",
@@ -300,13 +315,14 @@ async fn send_messages_from_file(cli_args: &CliArgs, messages_file: &str) {
         let client = reqwest::Client::new();
         let mut count = 0;
         loop {
-          let mut msg = String::new();
-          if reader.lock().await.read_line(&mut msg).await.unwrap() == 0 {
+          let mut line = String::new();
+          if reader.lock().await.read_line(&mut line).await.unwrap() == 0 {
             break;
           }
-          if msg.is_empty() {
+          if line.is_empty() {
             continue;
           }
+          let msg = base64_engine::STANDARD.decode(&line).unwrap();
           send_request(&client, msg, &cli_args).await;
           count += 1;
         }
