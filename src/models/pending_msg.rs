@@ -18,6 +18,7 @@ pub struct PendingMessage {
   pub epoch_tag: i16,
   pub message: Vec<u8>,
   pub threshold: i16,
+  pub is_postcard: bool,
 }
 
 #[derive(Insertable, Clone)]
@@ -27,13 +28,14 @@ pub struct NewPendingMessage {
   pub epoch_tag: i16,
   pub message: Vec<u8>,
   pub threshold: i16,
+  pub is_postcard: bool,
 }
 
 impl TryInto<NestedMessage> for PendingMessage {
   type Error = AppSTARError;
 
   fn try_into(self) -> Result<NestedMessage, Self::Error> {
-    parse_message(&self.message)
+    parse_message(&self.message, self.is_postcard)
   }
 }
 

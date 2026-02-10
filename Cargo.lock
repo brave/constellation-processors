@@ -213,9 +213,9 @@ checksum = "512761e0bb2578dd7380c6baaa0f4ce03e84f95e960231d1dec8bf4d7d6e2627"
 
 [[package]]
 name = "adss"
-version = "0.2.2"
+version = "0.2.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "766a68b8837e590be40019eebe4d70d61e800b2895a9741788e8f2b78927b9df"
+checksum = "a3dac589c22c33ac5c7a2a6bcad1fede869b4d4d42cc03f7280d8d51e77291db"
 dependencies = [
  "rand 0.8.5",
  "rand_core 0.6.4",
@@ -814,12 +814,6 @@ checksum = "349a06037c7bf932dd7e7d1f653678b2038b9ad46a74102f1fc7bd7872678cce"
 
 [[package]]
 name = "base64"
-version = "0.13.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "9e1b586273c5702936fe7b7d6896644d8be71e6314cfe09d3167c95f712589e8"
-
-[[package]]
-name = "base64"
 version = "0.21.7"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "9d297deb1925b89f2ccc13d7635fa0714f12c87adce1c75356b39ca9b7178567"
@@ -875,6 +869,7 @@ checksum = "1bc2832c24239b0141d5674bb9174f9d68a8b5b3f2753311927c172ca46f7e9c"
 dependencies = [
  "funty",
  "radium",
+ "serde",
  "tap",
  "wyz",
 ]
@@ -1033,6 +1028,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "cobs"
+version = "0.3.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "0fa961b519f0b462e3a3b4a34b64d119eeaca1d59af726fe450bbba07a9fc0a1"
+dependencies = [
+ "thiserror 2.0.12",
+]
+
+[[package]]
 name = "colorchoice"
 version = "1.0.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1072,6 +1076,7 @@ dependencies = [
  "k8s-openapi",
  "kube",
  "log",
+ "postcard",
  "prometheus-client",
  "r2d2",
  "rand 0.8.5",
@@ -1474,6 +1479,18 @@ dependencies = [
  "subtle",
  "zeroize",
 ]
+
+[[package]]
+name = "embedded-io"
+version = "0.4.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "ef1a6892d9eef45c8fa6b9e0086428a2cca8491aca8f787c534a3d6d0bcb3ced"
+
+[[package]]
+name = "embedded-io"
+version = "0.6.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "edd0f118536f44f5ccd48bcb8b111bdc3de888b58c74639dfb034a357d0f206d"
 
 [[package]]
 name = "encoding_rs"
@@ -2930,6 +2947,18 @@ dependencies = [
 ]
 
 [[package]]
+name = "postcard"
+version = "1.1.3"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "6764c3b5dd454e283a30e6dfe78e9b31096d9e32036b5d1eaac7a6119ccb9a24"
+dependencies = [
+ "cobs",
+ "embedded-io 0.4.0",
+ "embedded-io 0.6.1",
+ "serde",
+]
+
+[[package]]
 name = "powerfmt"
 version = "0.2.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2937,12 +2966,11 @@ checksum = "439ee305def115ba05938db6eb1644ff94165c5ab5e9420d1c1bcedbba909391"
 
 [[package]]
 name = "ppoprf"
-version = "0.3.1"
+version = "0.5.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "d97a7a93423a5988e153e29de494b2625528196476213a4401e91140487faf1a"
+checksum = "8c76569825569d0826e88dbc45e62557cc107aa760d1fe8c4589ed53136b3350"
 dependencies = [
- "base64 0.13.1",
- "bincode",
+ "base64 0.22.1",
  "bitvec",
  "curve25519-dalek",
  "derive_more 0.99.19",
@@ -3811,9 +3839,9 @@ dependencies = [
 
 [[package]]
 name = "sta-rs"
-version = "0.3.0"
+version = "0.3.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "7690c478e6f02fa258da818b1274b7ddf91abe772001b807d7c5113e1ce48e27"
+checksum = "0e2bf9e5b9e702793398fb68b255f1f956eb99927e5db8d99118af83b84f1c62"
 dependencies = [
  "adss",
  "ppoprf",
@@ -3831,12 +3859,12 @@ checksum = "a8f112729512f8e442d81f95a8a7ddf2b7c6b8a1a6f509a95864142b30cab2d3"
 
 [[package]]
 name = "star-constellation"
-version = "0.2.3"
+version = "0.4.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "e8cdb01f4d4ca4e96957570c6abf45d57de3143a94ff97082d1aae5e6f73802c"
+checksum = "50c2753b6f874d8ba4aadb957d71c70d0fb30ba8c16c85cfb594d18cdc2ccd62"
 dependencies = [
- "bincode",
  "lazy_static",
+ "postcard",
  "ppoprf",
  "rand 0.8.5",
  "serde",
@@ -3859,9 +3887,9 @@ dependencies = [
 
 [[package]]
 name = "strobe-rs"
-version = "0.8.1"
+version = "0.10.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "fabb238a1cccccfa4c4fb703670c0d157e1256c1ba695abf1b93bd2bb14bab2d"
+checksum = "98fe17535ea31344936cc58d29fec9b500b0452ddc4cc24c429c8a921a0e84e5"
 dependencies = [
  "bitflags 1.3.2",
  "byteorder",

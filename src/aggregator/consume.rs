@@ -128,7 +128,7 @@ fn create_parsing_tasks(
         while let Some(record) = raw_rx.recv().await {
           parsed_tx
             .send(MessageWithThreshold {
-              msg: parse_message(&record.data)?,
+              msg: parse_message(&record.data, record.is_postcard)?,
               threshold: record.request_threshold.unwrap_or(default_k_threshold),
             })
             .unwrap();
@@ -232,7 +232,7 @@ mod tests {
 
     let mut records_to_consume = record_stream.records_to_consume.lock().await;
     for (epoch, measurement) in msg_infos {
-      let msg = bincode::serialize(&SerializableNestedMessage::from(generate_test_message(
+      let msg = postcard::to_stdvec(&SerializableNestedMessage::from(generate_test_message(
         epoch,
         &vec![measurement.as_bytes().to_vec()],
         &fetcher,

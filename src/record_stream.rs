@@ -45,6 +45,7 @@ const KAFKA_COMMIT_TRX_TIMEOUT_SECS: u64 = 60 * 30;
 const KAFKA_PRODUCE_TIMEOUT_SECS: u64 = 12;
 
 const THRESHOLD_HEADER_NAME: &str = "threshold";
+const IS_POSTCARD_HEADER_NAME: &str = "is_postcard";
 
 #[derive(Debug, Display, Error, From)]
 #[display(fmt = "Record stream error: {}")]
@@ -101,6 +102,7 @@ pub struct ConsumedRecord {
   pub data: Vec<u8>,
   // Only applicable for the encrypted stream
   pub request_threshold: Option<usize>,
+  pub is_postcard: bool,
 }
 
 #[async_trait]
@@ -117,6 +119,7 @@ pub trait RecordStream {
     &self,
     record: &[u8],
     request_threshold: Option<usize>,
+    is_postcard: bool,
   ) -> Result<(), RecordStreamError>;
 
   async fn init_producer_queues(&self);
@@ -439,17 +442,25 @@ impl RecordStream for KafkaRecordStream {
     &self,
     record: &[u8],
     request_threshold: Option<usize>,
+    is_postcard: bool,
   ) -> Result<(), RecordStreamError> {
     let producer = self.producer.as_ref().expect("Kafka producer not enabled");
     let mut record: FutureRecord<str, [u8]> = FutureRecord::to(&self.topic).payload(record);
+    let mut headers = OwnedHeaders::new_with_capacity(2);
     if let Some(threshold) = request_threshold {
       let threshold = (threshold as u32).to_le_bytes();
-      let headers = OwnedHeaders::new_with_capacity(1).insert(Header {
+      headers = headers.insert(Header {
         key: THRESHOLD_HEADER_NAME,
         value: Some(&threshold),
       });
-      record = record.headers(headers);
     }
+    if is_postcard {
+      headers = headers.insert(Header {
+        key: IS_POSTCARD_HEADER_NAME,
+        value: Some(&()),
+      });
+    }
+    record = record.headers(headers);
     let send_result = producer
       .send(record, Duration::from_secs(KAFKA_PRODUCE_TIMEOUT_SECS))
       .await;
@@ -510,13 +521,20 @@ impl RecordStream for KafkaRecordStream {
       Some(s) => s.map_err(|_| RecordStreamError::Deserialize),
     }?;
     let mut request_threshold = None;
+    let mut is_postcard = false;
     if let Some(headers) = msg.headers() {
       let mut it = headers.iter();
       while let Some(header) = it.next() {
-        if header.key == THRESHOLD_HEADER_NAME {
-          let value = header.value.unwrap_or_default();
-          request_threshold =
-            Some(u32::from_le_bytes(value.try_into().unwrap_or_default()) as usize);
+        match header.key {
+          THRESHOLD_HEADER_NAME => {
+            let value = header.value.unwrap_or_default();
+            request_threshold =
+              Some(u32::from_le_bytes(value.try_into().unwrap_or_default()) as usize);
+          }
+          IS_POSTCARD_HEADER_NAME => {
+            is_postcard = true;
+          }
+          _ => {}
         }
       }
     }
@@ -528,6 +546,7 @@ impl RecordStream for KafkaRecordStream {
     Ok(ConsumedRecord {
       data: payload.to_vec(),
       request_threshold,
+      is_postcard,
     })
   }
 
@@ -576,6 +595,7 @@ impl RecordStream for TestRecordStream {
     &self,
     record: &[u8],
     _request_threshold: Option<usize>,
+    _is_postcard: bool,
   ) -> Result<(), RecordStreamError> {
     self.records_produced.lock().await.push(record.to_vec());
     Ok(())
@@ -584,7 +604,7 @@ impl RecordStream for TestRecordStream {
   async fn init_producer_queues(&self) {}
 
   async fn queue_produce(&self, record: Vec<u8>) -> Result<(), RecordStreamError> {
-    self.produce(&record, None).await
+    self.produce(&record, None, false).await
   }
 
   async fn join_produce_queues(&self) -> Result<(), RecordStreamError> {
@@ -601,6 +621,7 @@ impl RecordStream for TestRecordStream {
     Ok(ConsumedRecord {
       data: records_to_consume.remove(0),
       request_threshold: None,
+      is_postcard: true,
     })
   }
 
