@@ -1086,7 +1086,7 @@ dependencies = [
  "aws-sdk-rds",
  "aws-sdk-s3",
  "aws-sigv4",
- "base64 0.21.7",
+ "base64 0.22.1",
  "bincode",
  "calendar-duration",
  "clap",
