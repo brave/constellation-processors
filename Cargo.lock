@@ -1143,7 +1143,7 @@ dependencies = [
  "futures-core",
  "hex",
  "jemallocator",
- "k8s-openapi",
+ "k8s-openapi 0.27.1",
  "kube",
  "log",
  "prometheus-client",
@@ -2577,6 +2577,18 @@ dependencies = [
 ]
 
 [[package]]
+name = "k8s-openapi"
+version = "0.27.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "51b326f5219dd55872a72c1b6ddd1b830b8334996c667449c29391d657d78d5e"
+dependencies = [
+ "base64 0.22.1",
+ "jiff",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
 name = "keccak"
 version = "0.1.6"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2591,7 +2603,7 @@ version = "1.1.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "778f98664beaf4c3c11372721e14310d1ae00f5e2d9aabcf8906c881aa4e9f51"
 dependencies = [
- "k8s-openapi",
+ "k8s-openapi 0.25.0",
  "kube-client",
  "kube-core",
 ]
@@ -2617,7 +2629,7 @@ dependencies = [
  "hyper-timeout",
  "hyper-util",
  "jsonpath-rust",
- "k8s-openapi",
+ "k8s-openapi 0.25.0",
  "kube-core",
  "pem",
  "rustls 0.23.39",
@@ -2643,7 +2655,7 @@ dependencies = [
  "derive_more 2.1.1",
  "form_urlencoded",
  "http 1.4.0",
- "k8s-openapi",
+ "k8s-openapi 0.25.0",
  "serde",
  "serde-value",
  "serde_json",
