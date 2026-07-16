@@ -534,17 +534,30 @@ impl RecordStream for KafkaRecordStream {
   async fn commit_last_consume(&self) -> Result<(), RecordStreamError> {
     let consumer = self.consumer.as_ref().expect("Kafka consumer not enabled");
     trace!("committing");
-    if let Err(e) = consumer.commit_consumer_state(CommitMode::Sync) {
-      if let Some(e_code) = e.rdkafka_error_code() {
-        if e_code == RDKafkaErrorCode::NoOffset {
-          // No messages were consumed in this case; we can ignore this error
-          return Ok(());
-        }
+    for attempt in 1..=5 {
+      match consumer.commit_consumer_state(CommitMode::Sync) {
+        Ok(_) => return Ok(()),
+        Err(e) => match e.rdkafka_error_code() {
+          Some(RDKafkaErrorCode::NoOffset) => {
+            // No messages were consumed in this case; we can ignore this error
+            return Ok(());
+          }
+          Some(RDKafkaErrorCode::WaitingForCoordinator) => {
+            if attempt == 5 {
+              return Err(RecordStreamError::from(e));
+            }
+            warn!(
+              "Failed to commit Kafka consumption (attempt {}/5): {:?}",
+              attempt,
+              RecordStreamError::from(e.clone())
+            );
+            sleep(Duration::from_secs(attempt as u64)).await;
+          }
+          _ => return Err(RecordStreamError::from(e)),
+        },
       }
-      Err(RecordStreamError::from(e))
-    } else {
-      Ok(())
     }
+    unreachable!()
   }
 }
 
