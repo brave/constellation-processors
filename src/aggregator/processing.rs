@@ -348,10 +348,12 @@ pub fn start_subtask(
       pending_tags_to_remove.extend(pending_tags_to_remove_chunk);
 
       debug!("Task {}: Storing new pending messages", id);
-      grouped_msgs
+      if let Err(e) = grouped_msgs
         .store_new_pending_msgs(&store_conns, profiler.clone())
         .await
-        .unwrap();
+      {
+        panic!("Task {}: store_new_pending_msgs failed: {:?}", id, e);
+      }
 
       if !has_processed {
         break;
@@ -387,7 +389,9 @@ pub fn start_subtask(
     }
 
     info!("Task {}: Saving recovered messages", id);
-    rec_msgs.save(&store_conns, profiler.clone()).await.unwrap();
+    if let Err(e) = rec_msgs.save(&store_conns, profiler.clone()).await {
+      panic!("Task {}: rec_msgs.save failed: {:?}", id, e);
+    }
 
     profiler
       .record_range_time(ProfilerStat::TaskProcessingTime, processing_start_instant)
