@@ -6,6 +6,7 @@ use crate::models::{
 };
 use crate::profiler::Profiler;
 use crate::star::serialize_message_bincode;
+use crate::star::MSG_TAG_LEN;
 use futures::future::try_join_all;
 use star_constellation::api::NestedMessage;
 use std::cmp::max;
@@ -54,6 +55,14 @@ pub struct GroupedMessages {
 
 impl GroupedMessages {
   pub fn add(&mut self, mwt: MessageWithThreshold, parent_msg_tag: Option<&[u8]>) {
+    if mwt.msg.unencrypted_layer.tag.len() != MSG_TAG_LEN {
+      warn!(
+        "Ignoring message with unexpected tag length: expected {}, got {}",
+        MSG_TAG_LEN,
+        mwt.msg.unencrypted_layer.tag.len()
+      );
+      return;
+    }
     let epoch_chunk = self.msg_chunks.entry(mwt.msg.epoch).or_default();
     let chunk = epoch_chunk
       .entry(mwt.msg.unencrypted_layer.tag.clone())

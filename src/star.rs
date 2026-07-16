@@ -8,6 +8,9 @@ use star_constellation::Error as ConstellationError;
 use std::cmp::min;
 use std::str::{from_utf8, Utf8Error};
 
+/// Expected length (in bytes) of a STAR message tag.
+pub const MSG_TAG_LEN: usize = 32;
+
 #[derive(Error, From, Display, Debug)]
 pub enum AppSTARError {
   #[display(fmt = "failed to decode bincode")]

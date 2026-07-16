@@ -6,7 +6,7 @@ use crate::record_stream::{
   get_data_channel_topic_map_from_env, KafkaRecordStream, KafkaRecordStreamConfig,
   KafkaRecordStreamFactory, RecordStream,
 };
-use crate::star::{parse_message, AppSTARError};
+use crate::star::{parse_message, AppSTARError, MSG_TAG_LEN};
 use crate::util::parse_env_var;
 use actix_web::HttpRequest;
 use actix_web::{
@@ -110,6 +110,10 @@ async fn handle_measurement_submit(
       let body_str = from_utf8(&body)?.trim();
       let bincode_msg = base64_engine::STANDARD.decode(body_str)?;
       let message = parse_message(&bincode_msg)?;
+
+      if message.unencrypted_layer.tag.len() != MSG_TAG_LEN {
+        return Ok(HttpResponse::NoContent().finish());
+      }
 
       if let Some(min_revision) = state.min_revision_map.get(channel_name) {
         let req_revision: usize =
