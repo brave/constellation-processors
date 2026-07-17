@@ -163,11 +163,12 @@ impl KafkaRecordStreamFactory {
     &self,
     use_output_group_id: bool,
     topic: String,
+    channel_name: &str,
   ) -> Result<KafkaLagChecker, RecordStreamError> {
     let context = KafkaContext {
       msk_iam_auth_manager: self.msk_iam_auth_manager.clone(),
     };
-    KafkaLagChecker::new(use_output_group_id, topic, context)
+    KafkaLagChecker::new(use_output_group_id, topic, channel_name, context)
   }
 }
 
@@ -234,10 +235,10 @@ fn new_client_config() -> ClientConfig {
   result
 }
 
-fn new_consumer_config(use_output_group_id: bool) -> ClientConfig {
+fn new_consumer_config(use_output_group_id: bool, channel_name: &str) -> ClientConfig {
   let group_id = match use_output_group_id {
-    true => "star-agg-dec",
-    false => "star-agg-enc",
+    true => "star-agg-dec".to_string(),
+    false => format!("star-agg-enc-{}", channel_name),
   };
   let mut config = new_client_config();
   config
@@ -260,9 +261,10 @@ impl KafkaLagChecker {
   fn new(
     use_output_group_id: bool,
     topic: String,
+    channel_name: &str,
     context: KafkaContext,
   ) -> Result<Self, RecordStreamError> {
-    let config = new_consumer_config(use_output_group_id);
+    let config = new_consumer_config(use_output_group_id, &channel_name);
     let consumer: Arc<BaseConsumer<KafkaContext>> = Arc::new(config.create_with_context(context)?);
 
     // Clone the consumer for the background task
@@ -374,7 +376,10 @@ impl KafkaRecordStream {
       info!("Producing to topic: {}", stream_config.topic);
     }
     if stream_config.enable_consumer {
-      let config = new_consumer_config(stream_config.use_output_group_id);
+      let config = new_consumer_config(
+        stream_config.use_output_group_id,
+        &stream_config.channel_name,
+      );
       result.consumer = Some(config.create_with_context(context.clone()).unwrap());
       info!(
         "Consuming from topic: {} (current offsets: {:?})",
