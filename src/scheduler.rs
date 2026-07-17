@@ -198,7 +198,7 @@ impl Scheduler {
     let mut channels = HashMap::new();
 
     for (channel_name, topic_name) in topic_map.iter() {
-      let lag_checker = factory.create_lag_checker(false, topic_name.clone())?;
+      let lag_checker = factory.create_lag_checker(false, topic_name.clone(), channel_name)?;
 
       let threshold_str = threshold_map.get(channel_name).ok_or_else(|| {
         anyhow!(
