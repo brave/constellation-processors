@@ -173,6 +173,10 @@ pub async fn consume_and_group(
 
   info!("Messages grouped");
 
+  for rec_stream in rec_streams {
+    rec_stream.hold_consumer().await?;
+  }
+
   let msg_count = *msg_count.lock().await;
   Ok((grouped_msgs, msg_count))
 }

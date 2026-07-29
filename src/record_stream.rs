@@ -1,6 +1,6 @@
 use async_trait::async_trait;
 use derive_more::{Display, Error, From};
-use futures::future::try_join_all;
+use futures::future::{try_join_all, FutureExt};
 use rand::{seq::SliceRandom, thread_rng};
 use rdkafka::client::{ClientContext, OAuthToken};
 use rdkafka::config::ClientConfig;
@@ -125,6 +125,8 @@ pub trait RecordStream {
 
   async fn join_produce_queues(&self) -> Result<(), RecordStreamError>;
 
+  async fn hold_consumer(&self) -> Result<(), RecordStreamError>;
+
   async fn consume(&self) -> Result<ConsumedRecord, RecordStreamError>;
 
   async fn commit_last_consume(&self) -> Result<(), RecordStreamError>;
@@ -174,7 +176,7 @@ impl KafkaRecordStreamFactory {
 
 pub struct KafkaRecordStream {
   producer: Option<Arc<FutureProducer<KafkaContext>>>,
-  consumer: Option<StreamConsumer<KafkaContext>>,
+  consumer: Option<Arc<StreamConsumer<KafkaContext>>>,
   topic: String,
   producer_queues: RwLock<
     Vec<(
@@ -182,6 +184,7 @@ pub struct KafkaRecordStream {
       UnboundedSender<Vec<u8>>,
     )>,
   >,
+  consumer_hold_task: Mutex<Option<JoinHandle<()>>>,
 }
 
 pub fn get_data_channel_topic_map_from_env(use_output_topics: bool) -> HashMap<String, String> {
@@ -356,6 +359,7 @@ impl KafkaRecordStream {
       consumer: None,
       topic: stream_config.topic.clone(),
       producer_queues: RwLock::new(Vec::new()),
+      consumer_hold_task: Mutex::new(None),
     };
     if stream_config.enable_producer {
       let mut config = new_client_config();
@@ -380,7 +384,9 @@ impl KafkaRecordStream {
         stream_config.use_output_group_id,
         &stream_config.channel_name,
       );
-      result.consumer = Some(config.create_with_context(context.clone()).unwrap());
+      result.consumer = Some(Arc::new(
+        config.create_with_context(context.clone()).unwrap(),
+      ));
       info!(
         "Consuming from topic: {} (current offsets: {:?})",
         stream_config.topic,
@@ -506,6 +512,21 @@ impl RecordStream for KafkaRecordStream {
     Ok(())
   }
 
+  async fn hold_consumer(&self) -> Result<(), RecordStreamError> {
+    let consumer = self.consumer.as_ref().expect("Kafka consumer not enabled");
+    let assignment = consumer.assignment()?;
+    consumer.pause(&assignment)?;
+    let consumer = consumer.clone();
+    let handle = tokio::spawn(async move {
+      loop {
+        assert!(consumer.recv().now_or_never().is_none());
+        sleep(Duration::from_secs(10)).await;
+      }
+    });
+    *self.consumer_hold_task.lock().await = Some(handle);
+    Ok(())
+  }
+
   async fn consume(&self) -> Result<ConsumedRecord, RecordStreamError> {
     let consumer = self.consumer.as_ref().expect("Kafka consumer not enabled");
     let msg = consumer.recv().await?;
@@ -538,6 +559,15 @@ impl RecordStream for KafkaRecordStream {
 
   async fn commit_last_consume(&self) -> Result<(), RecordStreamError> {
     let consumer = self.consumer.as_ref().expect("Kafka consumer not enabled");
+    if let Some(handle) = self.consumer_hold_task.lock().await.take() {
+      handle.abort();
+      assert!(handle
+        .await
+        .expect_err("consumer hold task should never return")
+        .is_cancelled());
+      let assignment = consumer.assignment()?;
+      consumer.resume(&assignment)?;
+    }
     trace!("committing");
     for attempt in 1..=5 {
       match consumer.commit_consumer_state(CommitMode::Sync) {
@@ -606,6 +636,10 @@ impl RecordStream for TestRecordStream {
   }
 
   async fn join_produce_queues(&self) -> Result<(), RecordStreamError> {
+    Ok(())
+  }
+
+  async fn hold_consumer(&self) -> Result<(), RecordStreamError> {
     Ok(())
   }
 
