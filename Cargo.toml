@@ -46,4 +46,8 @@ aws-sdk-rds = "1.96"
 
 [profile.dev]
 opt-level = 3
+panic = "abort"
+
+[profile.release]
+panic = "abort"
 
