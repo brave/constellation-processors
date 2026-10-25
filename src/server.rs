@@ -13,7 +13,10 @@ use actix_web::{
   dev::Service,
   error::ResponseError,
   get,
-  http::{header::ContentType, StatusCode},
+  http::{
+    header::{ContentType, HeaderName},
+    StatusCode,
+  },
   post,
   web::{self, Data},
   App, HttpResponse, HttpServer, Responder,
@@ -22,7 +25,6 @@ use base64::{engine::general_purpose as base64_engine, Engine as _};
 use derive_more::{Display, Error, From};
 use futures::{future::try_join, FutureExt};
 use prometheus_client::registry::Registry;
-use reqwest::header::HeaderName;
 use std::collections::HashMap;
 use std::ops::RangeInclusive;
 use std::str::{from_utf8, FromStr, Utf8Error};

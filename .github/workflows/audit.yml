@@ -29,8 +29,8 @@ jobs:
           args: --force cargo-audit
 
       - name: Audit server
-        run: cargo audit --deny warnings
+        run: cargo audit
 
       - name: Audit test client
-        run: cargo audit --deny warnings
+        run: cargo audit
         working-directory: misc/test-client

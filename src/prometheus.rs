@@ -1,5 +1,6 @@
 use actix_web::dev::ServiceRequest;
 use actix_web::error::InternalError;
+use actix_web::http::StatusCode;
 use actix_web::{dev::Server, web, App, HttpResponse, HttpServer};
 use prometheus_client::encoding::text::encode;
 use prometheus_client::encoding::EncodeLabelSet;
@@ -8,7 +9,6 @@ use prometheus_client::metrics::family::Family;
 use prometheus_client::metrics::gauge::Gauge;
 use prometheus_client::metrics::histogram::{exponential_buckets, Histogram};
 use prometheus_client::registry::Registry;
-use reqwest::StatusCode;
 use std::io;
 use std::time::Duration;
 use tokio::sync::Mutex;
