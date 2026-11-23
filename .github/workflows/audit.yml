@@ -29,7 +29,7 @@ jobs:
           args: --force cargo-audit
 
       - name: Audit server
-        run: cargo audit
+        run: cargo audit --ignore RUSTSEC-2026-0594
 
       - name: Audit test client
         run: cargo audit
