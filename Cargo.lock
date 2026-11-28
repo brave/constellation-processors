@@ -3299,9 +3299,9 @@ checksum = "63b8176103e19a2643978565ca18b50549f6101881c443590420e4dc998a3c69"
 
 [[package]]
 name = "rdkafka"
-version = "0.38.0"
+version = "0.40.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "5f1856d72dbbbea0d2a5b2eaf6af7fb3847ef2746e883b11781446a51dbc85c0"
+checksum = "41efe6cce81066ae2e5ece4b64e8eee0602ef0f757506a04c0731c17d9dbd04f"
 dependencies = [
  "futures-channel",
  "futures-util",
